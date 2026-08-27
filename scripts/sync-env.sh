@@ -29,17 +29,34 @@ EXAMPLE="$ENVS_DIR/.env.$ENV_NAME.example"
 TARGET="$ENVS_DIR/.env.$ENV_NAME"
 
 # 1. Ensure ENVS_DIR/.env.<env> exists: Infisical preferred, fallback to example
-if [[ -f "$TARGET" ]]; then
-  echo "Using existing $TARGET"
-else
-  if command -v infisical >/dev/null 2>&1 && infisical --help >/dev/null 2>&1; then
-    echo "Infisical detected — pulling $ENV_NAME env from Infisical..."
-    if infisical export --env="$ENV_NAME" --path="/shared" --format=dotenv > "$TARGET" 2>/dev/null; then
-      echo "Pulled $ENV_NAME from Infisical -> $TARGET"
+# Always try Infisical if available; fallback to example if empty or failed
+INFISICAL_BIN=""
+if command -v infisical >/dev/null 2>&1; then
+  INFISICAL_BIN="infisical"
+elif command -v mise >/dev/null 2>&1 && mise exec -- infisical --help >/dev/null 2>&1; then
+  INFISICAL_BIN="mise exec -- infisical"
+fi
+if [[ -n "$INFISICAL_BIN" ]] && $INFISICAL_BIN --help >/dev/null 2>&1; then
+  echo "Infisical detected ($INFISICAL_BIN) — pulling $ENV_NAME env from Infisical..."
+  INFISICAL_PATH="${INFISICAL_PATH:-/}"
+  TMP_TARGET="$(mktemp)"
+  if (cd "$INFRA_DIR" && $INFISICAL_BIN export --env="$ENV_NAME" --path="$INFISICAL_PATH" --format=dotenv > "$TMP_TARGET" 2>/dev/null); then
+    # If Infisical returns empty (no secrets at path), fallback to example
+    if [[ -s "$TMP_TARGET" ]] && grep -q "=" "$TMP_TARGET" 2>/dev/null; then
+      cp "$TMP_TARGET" "$TARGET"
+      echo "Pulled $ENV_NAME from Infisical ($INFISICAL_PATH) -> $TARGET ($(wc -l < "$TARGET") lines)"
     else
-      echo "Infisical pull failed (not logged in?) — falling back to $EXAMPLE"
+      echo "Infisical returned empty for path $INFISICAL_PATH (no secrets yet) — falling back to $EXAMPLE"
       cp "$EXAMPLE" "$TARGET"
     fi
+    rm -f "$TMP_TARGET"
+  else
+    echo "Infisical export failed for path $INFISICAL_PATH (not logged in?) — falling back to $EXAMPLE"
+    cp "$EXAMPLE" "$TARGET"
+  fi
+else
+  if [[ -f "$TARGET" ]]; then
+    echo "Using existing $TARGET (Infisical not installed)"
   else
     echo "Infisical not installed — copying $EXAMPLE -> $TARGET"
     cp "$EXAMPLE" "$TARGET"
