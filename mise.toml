@@ -1,0 +1,17 @@
+# mise.toml — auto-load env for local dev (local-only, not for prod secrets)
+# Requires: mise trust (run once)
+[env]
+# Load shared dev env; sync-env.sh generates this from envs/.env.dev.example or Infisical
+_.file = "envs/.env.dev"
+
+[tasks.sync-env]
+description = "Sync .env.dev.example -> envs/.env.dev -> ../job-platform-*/.env (ORG=dut-pbl6-2026)"
+run = "./scripts/sync-env.sh dev"
+sources = ["envs/.env.dev.example", "scripts/sync-env.sh"]
+
+[tasks.sync-env-prod]
+description = "Sync prod (Infisical required)"
+run = "./scripts/sync-env.sh prod"
+
+[tools]
+# No hard tool pin; devs install infisical/mise via docs

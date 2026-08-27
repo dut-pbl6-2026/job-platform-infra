@@ -2,3 +2,9 @@ bin/
 obj/
 .vs/
 *.nupkg
+mise.toml.local
+.env
+.env.bak.*
+INFISICAL_TOKEN
+envs/.env.dev
+envs/.env.prod
