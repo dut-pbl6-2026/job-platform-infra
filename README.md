@@ -2,7 +2,7 @@
 
 Docker Compose, K8s manifests, env sync — **Vietnam Job Platform** (`pbl6`) under [`dut-pbl6-2026`](https://github.com/dut-pbl6-2026).
 
-- **Branch flow:** `feature/* → develop → release/* → main` (see `job-platform-docs/.github/git-strategy.md`)
+- **Branch flow:** `feature/* → main` (see `job-platform-docs/.github/git-strategy.md`)
 - **Jira:** `PBL6` on `skid.atlassian.net` — 8 sprints `W1-16`
 - **TM:** TM1 Hoai (infra/gateway), TM2 Thanh (job/search/crawler/ai), TM3 Chi Bao (web), TM4 Khoa (mobile)
 
