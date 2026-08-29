@@ -43,7 +43,7 @@ infisical --version
 mise run sync-env
 
 # verify
-ls ../job-platform-*/.env | wc -l  # 14
+mise run verify  # 14
 cat envs/.env.dev | head -n 20
 ```
 
@@ -68,7 +68,7 @@ docker compose config -q                      # lint
 
 - `mise trust` not run → `env not loaded`, `dotnet --version` fails → run `mise trust` per repo.
 - `port already allocated` → `docker compose down -v` or `lsof -i :5432`.
-- `ls ../job-platform-*/.env` not 14 → re-run `sync-env.sh dev`.
+- `mise run verify` not 14 → re-run `mise run sync-env`.
 - `infisical login` fail → fallback to `cp envs/.env.dev.example envs/.env.dev`.
 
 ## Related Repos
