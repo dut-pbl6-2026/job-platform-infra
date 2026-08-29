@@ -8,11 +8,18 @@ Docker Compose, K8s manifests, env sync — **Vietnam Job Platform** (`pbl6`) un
 
 ## Prerequisites
 
-- `mise` https://mise.jdx.dev `curl https://mise.run | sh` + `eval "$(mise activate bash)"` in `~/.bashrc`
+- `mise` https://mise.jdx.dev — install `curl https://mise.run | sh` / `brew install mise` / `winget install jdx.mise` (see https://mise.jdx.dev/getting-started.html)
 - `docker` + `docker compose v2` `docker --version`
 - `git` + `gh` `gh auth login`
-- `dotnet 10.0.100` via `mise` (no manual install)
-- `infisical` optional `mise exec -- infisical --version`
+- `dotnet 10.0.100` via `mise` (no manual install) — `mise trust && mise install && mise exec -- dotnet --version # 10.0.100`
+- Activate (optional, for bare `dotnet`/`infisical` without `mise exec`):
+
+  | Shell | Add to config file | Activate |
+  |-------|--------------------|----------|
+  | `bash` | `~/.bashrc` or `~/.bash_profile` | `eval "$(mise activate bash)"` |
+  | `zsh` | `~/.zshrc` | `eval "$(mise activate zsh)"` |
+  | `fish` | `~/.config/fish/config.fish` | `mise activate fish \| source` |
+  | `PowerShell` | `$PROFILE` | `mise activate pwsh \| Out-String \| Invoke-Expression` |
 
 ## Clone
 
