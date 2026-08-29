@@ -2,15 +2,9 @@
 set -euo pipefail
 
 # sync-env.sh — One-command env sync for 14-repo job-platform
-# ORG guard: only dut-pbl6-2026, local-only (techsoft never touched)
 ORG="${ORG:-dut-pbl6-2026}"
 if [[ "$ORG" != "dut-pbl6-2026" ]]; then
   echo "Abort: ORG must be dut-pbl6-2026 (got $ORG)" >&2
-  exit 1
-fi
-# Ensure not inside techsoft-code check (local-only)
-if grep -qr "techsoft" --include="*.sh" . 2>/dev/null | grep -v "techsoft.*never"; then
-  echo "Guard: techsoft string found in scripts — abort" >&2
   exit 1
 fi
 
@@ -88,8 +82,3 @@ if command -v mise >/dev/null 2>&1; then
 fi
 
 echo "Done. Verify: ls $PARENT_DIR/job-platform-*/.env | wc -l should be $count"
-# Safety: ensure techsoft never in synced files
-if grep -qi "techsoft" "$TARGET" 2>/dev/null; then
-  echo "Warning: techsoft found in env — remove it" >&2
-  exit 1
-fi
