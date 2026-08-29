@@ -1,8 +1,4 @@
-# job-platform-infra/docker-compose.yml — PBL6-11 Day Mon W1 TM1 docs/master-plan.md:149
-# Stack: PG/Redis/ES/Kafka (+ mailhog/kafka-ui). Env single-source: envs/.env.dev via env_file.
-# Run: docker compose up -d && docker compose ps
-# Verify: pg_isready / redis-cli ping / curl localhost:9200 / kafka-topics --list
-# Teardown: docker compose down -v
+# job-platform-infra/docker-compose.yml — see README.md
 name: job-platform
 
 services:
