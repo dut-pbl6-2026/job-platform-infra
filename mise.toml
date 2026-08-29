@@ -13,5 +13,9 @@ sources = ["envs/.env.dev.example", "scripts/sync-env.sh"]
 description = "Sync prod (Infisical required)"
 run = "./scripts/sync-env.sh prod"
 
+[tasks.verify]
+description = "Verify 14 repos have .env"
+run = 'ls -1 ../job-platform-*/.env 2>/dev/null | wc -l; echo " repos have .env (expected 14)"'
+
 [tools]
 dotnet = "10.0.100"

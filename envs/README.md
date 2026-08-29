@@ -26,7 +26,6 @@ cp envs/.env.dev.example envs/.env.dev
 
 # 3. Sync to every repo (one command)
 ./scripts/sync-env.sh dev
-# or from parent: make sync-env
 # or: mise run sync-env
 
 # 4. Verify
