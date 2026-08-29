@@ -14,4 +14,4 @@ description = "Sync prod (Infisical required)"
 run = "./scripts/sync-env.sh prod"
 
 [tools]
-# No hard tool pin; devs install infisical/mise via docs
+dotnet = "10.0.100"
