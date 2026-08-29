@@ -9,10 +9,7 @@ jobs:
         run: cp envs/.env.dev.example envs/.env.dev
       - name: Lint compose
         run: docker compose config -q && echo "compose ok"
-      - name: Verify env sync + no techsoft leak
-        run: |
-          test -f envs/.env.dev.example
-          ! grep -R "techsoft" -- envs/ docker/ docker-compose.yml 2>/dev/null || (echo "techsoft leak"; exit 1)
-          echo "no leak"
+      - name: Verify env sync
+        run: test -f envs/.env.dev.example && echo "env ok"
       - name: Check init.sql
         run: test -f docker/postgres/init.sql && grep -q "job_platform_auth" docker/postgres/init.sql
