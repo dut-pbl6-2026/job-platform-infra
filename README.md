@@ -32,15 +32,11 @@ mise install
 dotnet --version  # 10.0.100
 infisical --version
 
-# 2. env sync — one command, no manual copy
-./scripts/sync-env.sh dev      # copies envs/.env.dev.example -> envs/.env.dev -> ../job-platform-*/.env
-# or
+# 2. env sync — one command
 mise run sync-env
-make sync-env
 
 # verify
 ls ../job-platform-*/.env | wc -l  # 14
-make verify
 cat envs/.env.dev | head -n 20
 ```
 
