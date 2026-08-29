@@ -29,8 +29,8 @@ done
 # 1. trust + install tools (run once per repo)
 mise trust
 mise install
-mise exec -- dotnet --version  # 10.0.100
-mise exec -- infisical --version
+dotnet --version  # 10.0.100
+infisical --version
 
 # 2. env sync — one command, no manual copy
 ./scripts/sync-env.sh dev      # copies envs/.env.dev.example -> envs/.env.dev -> ../job-platform-*/.env
@@ -45,8 +45,10 @@ cat envs/.env.dev | head -n 20
 ```
 
 - Source `envs/.env.dev.example` committed (108 lines `JWT_SECRET` `DATABASE_URL*` `REDIS` `ES` `KAFKA`). Never commit `envs/.env.dev` or `../job-platform-*/.env` (`.gitignore`).
-- Infisical `infisical login && mise exec -- infisical export --env=dev --path=/ --format=dotenv > envs/.env.dev` then `sync-env.sh` distributes. Fallback `cp .example` if no login. `mise.toml` `_.file=envs/.env.dev` auto-loads.
+- Infisical `infisical login && infisical export --env=dev --path=/ --format=dotenv > envs/.env.dev` then `sync-env.sh` distributes. Fallback `cp .example` if no login. `mise.toml` `_.file=envs/.env.dev` auto-loads.
 - Prod `mise run sync-env-prod` needs `infisical login` + `envs/.env.prod.example` `__SET_VIA_INFISICAL__`.
+
+> Note: agent uses `mise exec -- dotnet ...` / `mise exec -- infisical ...` due to non-interactive shell without `mise activate`; humans just use `dotnet` / `infisical` after `mise install`.
 
 ## Docker Compose (PBL6-11)
 
@@ -61,7 +63,7 @@ docker compose config -q                      # lint
 
 ## Troubleshooting
 
-- `mise trust` not run → `env not loaded`, `mise exec -- dotnet --version` fails → run `mise trust` per repo.
+- `mise trust` not run → `env not loaded`, `dotnet --version` fails → run `mise trust` per repo.
 - `port already allocated` → `docker compose down -v` or `lsof -i :5432`.
 - `ls ../job-platform-*/.env` not 14 → re-run `sync-env.sh dev`.
 - `infisical login` fail → fallback to `cp envs/.env.dev.example envs/.env.dev`.
