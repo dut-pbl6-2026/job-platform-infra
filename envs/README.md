@@ -29,7 +29,7 @@ cp envs/.env.dev.example envs/.env.dev
 # or: mise run sync-env
 
 # 4. Verify
-ls ../job-platform-*/.env  # 14 files, git-ignored
+mise run verify  # 14 files, git-ignored
 docker compose -f ../job-platform-infra/docker-compose.yml up -d
 ```
 
