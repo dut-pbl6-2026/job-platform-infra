@@ -41,7 +41,7 @@ docker compose down -v    # reset volumes (re-runs init.sql)
 
 ## K8s / deployment (SRS 8.6, 9)
 
-- Local: Compose hot-reload + `env_file`. Staging `Fly.io` 3×1vCPU + `Supabase` 500MB + `Upstash` Redis + `Bonsai` ES 1GB + `Confluent` Kafka + `R2` 10GB — zero-cost (`docs/srs/en/9-infra-cost-analysis.md`).
+- Local: Compose hot-reload + `env_file`. Staging `Render Free 750h + Vercel` + `Supabase` 500MB + `Upstash` Redis + `Bonsai` ES 1GB + `Confluent` Kafka + `R2` 10GB — zero-cost (`docs/srs/en/9-infra-cost-analysis.md`).
 - K8s NICE `K8S-01` (`docs/srs/en/5-nice-have-fr.md`) — manifests `Deployment/Service/Ingress/ConfigMap/Secret/HPA` not yet in repo; keep Compose parity, no hard-coded env vars (`docs/srs/en/6-nfr.md:PORT-02`).
 - CI `.github/workflows/ci.yml`: `cp .example→.env.dev`, `docker compose config -q`, `grep job_platform_auth`.
 

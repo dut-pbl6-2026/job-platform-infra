@@ -117,6 +117,77 @@ services:
       - "8025:8025"
     networks: [job-platform]
 
+  # ── App Services (PBL6-16 E2E auth via gateway) ──
+  auth:
+    build:
+      context: ../job-platform-auth-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-auth
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5001
+      # Override Host for Docker bridge DNS (workaround: localhost outside compose)
+      DATABASE_URL_AUTH: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      ConnectionStrings__AuthDb: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:8080
+    ports:
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5001/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks: [job-platform]
+
+  gateway:
+    build:
+      context: ../job-platform-gateway
+      dockerfile: Dockerfile
+    container_name: job-platform-gateway
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5000
+      GATEWAY_UPSTREAM_AUTH: http://auth:5001
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,https://job-platform-web.vercel.app
+    ports:
+      - "5000:5000"
+    depends_on:
+      auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks: [job-platform]
+
+  web:
+    build:
+      context: ../job-platform-web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:5000
+        VITE_API_BASE_URL: http://localhost:5000/api
+    container_name: job-platform-web
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [job-platform]
+
 volumes:
   pg_data:
   redis_data:
