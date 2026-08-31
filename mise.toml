@@ -19,3 +19,6 @@ run = 'ls -1 ../job-platform-*/.env 2>/dev/null | wc -l; echo " repos have .env 
 
 [tools]
 dotnet = "10.0.100"
+infisical = "latest"
+gh = "latest"
+cloudflared = "latest"

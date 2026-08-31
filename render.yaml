@@ -1,0 +1,113 @@
+services:
+  - type: web
+    name: jp-auth
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ../job-platform-auth-svc
+    healthCheckPath: /health
+    plan: free
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://+:5001
+      - key: JWT_ISSUER
+        value: job-platform
+      - key: JWT_AUDIENCE
+        value: job-platform
+      - fromDatabase:
+          name: supabase-auth
+          property: connectionString
+          # fallback: set DATABASE_URL_AUTH via Render Dashboard
+      # Secrets (set via Render Dashboard or GH Secrets + deploy hook):
+      # JWT_SECRET, DATABASE_URL_AUTH, CORS_ORIGINS
+    autoDeploy: false
+
+  - type: web
+    name: jp-gateway
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ../job-platform-gateway
+    healthCheckPath: /health
+    plan: free
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://+:5000
+      - key: GATEWAY_UPSTREAM_AUTH
+        value: https://jp-auth.onrender.com
+      - key: CORS_ORIGINS
+        value: https://jp-web.vercel.app,https://jp-web-*.vercel.app,https://job-platform-web.vercel.app
+      # Secrets: JWT_SECRET (same as auth)
+    autoDeploy: false
+
+  - type: web
+    name: jp-job
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ../job-platform-job-svc
+    healthCheckPath: /health
+    plan: free
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://+:5002
+    autoDeploy: false
+
+  - type: web
+    name: jp-search
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ../job-platform-search-svc
+    healthCheckPath: /health
+    plan: free
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://+:5003
+    autoDeploy: false
+
+  - type: web
+    name: jp-app
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ../job-platform-app-svc
+    healthCheckPath: /health
+    plan: free
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://+:5004
+    autoDeploy: false
+
+  - type: web
+    name: jp-profile
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ../job-platform-profile-svc
+    healthCheckPath: /health
+    plan: free
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://+:5005
+    autoDeploy: false
+
+  - type: web
+    name: jp-notif
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: ../job-platform-notif-svc
+    healthCheckPath: /health
+    plan: free
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://+:5006
+    autoDeploy: false
