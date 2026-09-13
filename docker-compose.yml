@@ -158,7 +158,15 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ASPNETCORE_URLS: http://+:5000
       GATEWAY_UPSTREAM_AUTH: http://auth:5001
+      # job/search/app/profile run as local `dotnet` processes (dev-up.sh --with-*),
+      # so the container reaches them via the host gateway.
+      GATEWAY_UPSTREAM_JOB: http://host.docker.internal:5002
+      GATEWAY_UPSTREAM_SEARCH: http://host.docker.internal:5003
+      GATEWAY_UPSTREAM_APP: http://host.docker.internal:5004
+      GATEWAY_UPSTREAM_PROFILE: http://host.docker.internal:5005
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000,https://job-platform-web.vercel.app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "5000:5000"
     depends_on:
