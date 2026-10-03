@@ -4,4 +4,4 @@
 # search index with vietnamese_icu fails. Build: docker compose build elasticsearch.
 # Docs: master-plan.md:238 (W6 Vietnamese analyzer).
 FROM docker.elastic.co/elasticsearch/elasticsearch:8.13.2
-RUN bin/elasticsearch-plugin install --batch analysis-icu
+RUN bin/elasticsearch-plugin install --batch analysis-icu
