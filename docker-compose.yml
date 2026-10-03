@@ -42,7 +42,11 @@ services:
     networks: [job-platform]
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.2
+    # Custom image: adds analysis-icu (vietnamese_icu analyzer for search-svc W6).
+    # Build once: docker compose build elasticsearch (up alone reuses the old image tag).
+    build:
+      context: ./docker/es
+    image: job-platform-elasticsearch:8.13.2-icu
     container_name: job-platform-elasticsearch
     restart: unless-stopped
     environment:
