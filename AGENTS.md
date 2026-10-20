@@ -28,7 +28,7 @@ Docker Compose, K8s manifests (NICE), env sync — Vietnam Job Platform (`pbl6`)
 ## Docker Compose (PBL6-11, `DB-01`)
 
 Services `docker-compose.yml` (`name: job-platform`, `network job-platform` bridge):
-`postgres:16-alpine` 5432 (`pg_data` + `docker/postgres/init.sql` → `job_platform_auth/job_platform_job/job_platform_app` + `pgcrypto`, `healthcheck pg_isready`), `redis:7` 6379 (`redis ping`), `elasticsearch:8.13.2` 9200 single-node `xpack.security.enabled=false`, `kafka:3.7` KRaft 9092/9093 topics `job-events,application-events`, `kafka-ui` 8080, `mailhog` 1025/8025.
+`postgres:16-alpine` 5432 (`pg_data` + `docker/postgres/init.sql` → `job_platform_auth/job_platform_job/job_platform_app` + `pgcrypto`, `healthcheck pg_isready`), `redis:7` 6379 (`redis ping`), `elasticsearch:8.13.2` 9200 single-node `xpack.security.enabled=false`, `apache/kafka:3.7.0` KRaft 9092/9093 topics `job-events,application-events`, `kafka-ui` 8080, `mailhog` 1025/8025.
 
 ```bash
 mise trust && mise install
