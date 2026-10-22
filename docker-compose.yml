@@ -140,11 +140,16 @@ services:
       # Override Host for Docker bridge DNS (workaround: localhost outside compose)
       DATABASE_URL_AUTH: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
       ConnectionStrings__AuthDb: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:8080
     ports:
       - "5001:5001"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5001/health || exit 1"]
@@ -173,6 +178,9 @@ services:
       GATEWAY_UPSTREAM_APP: http://host.docker.internal:5004
       GATEWAY_UPSTREAM_PROFILE: http://host.docker.internal:5005
       GATEWAY_UPSTREAM_NOTIF: http://host.docker.internal:5006
+      REDIS_URL: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000,https://job-platform-web.vercel.app
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -180,6 +188,8 @@ services:
       - "5000:5000"
     depends_on:
       auth:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
