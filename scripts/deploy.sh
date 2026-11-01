@@ -4,38 +4,42 @@ set -euo pipefail
 # deploy.sh — PBL6-51 production deploy (idempotent; safe to re-run, also used for rollback).
 #
 # Usage:
-#   scripts/deploy.sh [options] compose            # single host: pull GHCR images, up -d, smoke check
-#   scripts/deploy.sh [options] render             # Render: trigger deploy hooks, smoke check
+#   scripts/deploy.sh [options] compose                 # any host with docker: pull GHCR images, up -d --wait, smoke check
+#   scripts/deploy.sh [options] azure up                # Azure VM: az vm start, wait SSH, sync, compose up on VM, smoke via FQDN
+#   scripts/deploy.sh [options] azure down              # compose down (optional --compose-down) + az vm deallocate
+#   scripts/deploy.sh [options] azure status            # VM power state, FQDN, remote `compose ps`
+#   scripts/deploy.sh --tag <sha> azure rollback        # same as `azure up` pinned to a previous image tag (--tag required)
 #
 # Options:
-#   --dry-run            print what would run, change nothing (no pull/up/curl/hook calls)
-#   --tag TAG            image tag/sha for all services (compose: IMAGE_TAG; render: hook ref=TAG). Default: latest
+#   --dry-run            print what would run, change nothing (no az/ssh/pull/up/curl calls)
+#   --tag TAG            image tag/sha for all services (IMAGE_TAG). Default: latest
 #   --env-file FILE      compose env file (default envs/.env.prod)
-#   --services "a b"     render only: subset of auth gateway job search app profile notif (default: all)
-#   --retries N          smoke-check attempts (default 30 compose / 40 render)
-#   --interval SECS      seconds between attempts (default 5 compose / 15 render)
+#   --compose-down       azure down: also `docker compose down` (never -v) before deallocating
+#   --retries N          smoke-check attempts (default 30)
+#   --interval SECS      seconds between attempts (default 5)
 #   -h, --help
 #
-# Env (render target): RENDER_DEPLOY_HOOK_<SVC> (full hook URL incl. key, SVC upper-case: AUTH GATEWAY JOB
-#   SEARCH APP PROFILE NOTIF) — never printed. Optional RENDER_SMOKE_URL_<SVC> (default https://jp-<svc>.onrender.com/health).
+# Env (azure target): AZURE_RESOURCE_GROUP, AZURE_VM_NAME, AZURE_VM_SSH_USER (default azureuser), AZURE_SSH_KEY (path to
+#   private key), optional AZURE_SUBSCRIPTION_ID, AZURE_VM_HOST (override FQDN/IP), AZURE_REMOTE_DIR (default ~/job-platform),
+#   GHCR_USER + GHCR_TOKEN (only if images are private; token goes via ssh stdin, never argv).
 # Env (compose target): values from --env-file; smoke URL override COMPOSE_SMOKE_URL (default http://localhost:${GATEWAY_PORT:-5000}/health).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INFRA_DIR="$(dirname "$SCRIPT_DIR")"
 COMPOSE_FILE="$INFRA_DIR/docker-compose.prod.yml"
-ALL_RENDER_SVCS="auth gateway job search app profile notif"
 
 DRY_RUN=0
 TAG=""
 ENV_FILE="$INFRA_DIR/envs/.env.prod"
-SERVICES="$ALL_RENDER_SVCS"
+ACTION=""
+COMPOSE_DOWN=0
 RETRIES=""
 INTERVAL=""
 TARGET=""
 
 log() { printf '[deploy] %s\n' "$*"; }
 die() { printf '[deploy] ERROR: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '4,22p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '4,26p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # run CMD... : execute, or print when --dry-run
 run() {
@@ -51,16 +55,21 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=1 ;;
     --tag) [ $# -ge 2 ] || die "--tag needs a value"; TAG="$2"; shift ;;
     --env-file) [ $# -ge 2 ] || die "--env-file needs a value"; ENV_FILE="$2"; shift ;;
-    --services) [ $# -ge 2 ] || die "--services needs a value"; SERVICES="$2"; shift ;;
+    --compose-down) COMPOSE_DOWN=1 ;;
     --retries) [ $# -ge 2 ] || die "--retries needs a value"; RETRIES="$2"; shift ;;
     --interval) [ $# -ge 2 ] || die "--interval needs a value"; INTERVAL="$2"; shift ;;
     -h|--help) usage; exit 0 ;;
-    compose|render) [ -z "$TARGET" ] || die "target given twice"; TARGET="$1" ;;
+    compose|azure) [ -z "$TARGET" ] || die "target given twice"; TARGET="$1" ;;
+    up|down|status|rollback) [ "$TARGET" = azure ] || die "'$1' only applies to the azure target"; [ -z "$ACTION" ] || die "action given twice"; ACTION="$1" ;;
     *) die "unknown argument: $1 (see --help)" ;;
   esac
   shift
 done
-[ -n "$TARGET" ] || { usage >&2; die "missing target: compose|render"; }
+[ -n "$TARGET" ] || { usage >&2; die "missing target: compose|azure"; }
+if [ "$TARGET" = azure ]; then
+  [ -n "$ACTION" ] || die "azure needs an action: up|down|status|rollback"
+  { [ "$ACTION" != rollback ] || [ -n "$TAG" ]; } || die "rollback requires --tag <previous-sha>"
+fi
 case "$TAG" in *[!A-Za-z0-9._-]*) die "invalid --tag '$TAG'" ;; esac
 
 # smoke URL [retries] [interval] : poll until HTTP 2xx
@@ -107,51 +116,110 @@ deploy_compose() {
   log "compose deploy OK"
 }
 
-deploy_render() {
-  local retries="${RETRIES:-40}" interval="${INTERVAL:-15}" svc upper var hook sep url failed=0
-  [ "$DRY_RUN" -eq 1 ] || command -v curl >/dev/null 2>&1 || die "curl not found"
-  for svc in $SERVICES; do
-    case " $ALL_RENDER_SVCS " in *" $svc "*) ;; *) die "unknown service '$svc' (valid: $ALL_RENDER_SVCS)" ;; esac
-  done
-
-  # Validate all hooks first so we never deploy half the stack because of a missing secret.
-  for svc in $SERVICES; do
-    upper="$(printf '%s' "$svc" | tr '[:lower:]' '[:upper:]')"
-    var="RENDER_DEPLOY_HOOK_${upper}"
-    if [ -z "${!var:-}" ]; then
-      [ "$DRY_RUN" -eq 1 ] && log "dry-run: $var is not set (would fail on a real run)" || die "$var is not set"
+# ── azure target ──────────────────────────────────────────────────────────────
+# Config comes from env vars only; the SSH key path is a file, tokens go through stdin.
+az_cfg() {
+  AZ_RG="${AZURE_RESOURCE_GROUP:-}"; AZ_VM="${AZURE_VM_NAME:-}"
+  AZ_USER="${AZURE_VM_SSH_USER:-azureuser}"; AZ_KEY="${AZURE_SSH_KEY:-}"
+  AZ_DIR="${AZURE_REMOTE_DIR:-job-platform}"
+  local v
+  for v in AZURE_RESOURCE_GROUP AZURE_VM_NAME AZURE_SSH_KEY; do
+    if [ -z "${!v:-}" ]; then
+      [ "$DRY_RUN" -eq 1 ] && log "dry-run: $v is not set (would fail on a real run)" || die "$v is not set"
     fi
   done
+  [ "$DRY_RUN" -eq 1 ] || command -v az >/dev/null 2>&1 || die "az CLI not found (https://aka.ms/installazurecli, then az login)"
+  [ "$DRY_RUN" -eq 1 ] || command -v ssh >/dev/null 2>&1 || die "ssh not found"
+  AZ_RG="${AZ_RG:-<AZURE_RESOURCE_GROUP>}"; AZ_VM="${AZ_VM:-<AZURE_VM_NAME>}"; AZ_KEY="${AZ_KEY:-<AZURE_SSH_KEY>}"
+  AZ_SUB=()
+  [ -z "${AZURE_SUBSCRIPTION_ID:-}" ] || AZ_SUB=(--subscription "$AZURE_SUBSCRIPTION_ID")
+  SSH_OPTS=(-i "$AZ_KEY" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes)
+}
 
-  for svc in $SERVICES; do
-    upper="$(printf '%s' "$svc" | tr '[:lower:]' '[:upper:]')"
-    var="RENDER_DEPLOY_HOOK_${upper}"
-    hook="${!var:-<$var>}"
-    sep='?'; case "$hook" in *\?*) sep='&' ;; esac
-    if [ -n "$TAG" ]; then hook="${hook}${sep}ref=${TAG}"; fi
-    log "trigger render deploy: jp-$svc${TAG:+ ref=$TAG}"
-    if [ "$DRY_RUN" -eq 1 ]; then
-      printf '[dry-run] curl -fsS -X POST <%s hidden>\n' "$var"
-    else
-      # URL holds the deploy key: pass via stdin config so it never shows in argv/process list or logs.
-      printf 'url = "%s"\n' "$hook" | curl -fsS -o /dev/null --max-time 30 -X POST -K - \
-        || { log "hook failed for jp-$svc"; failed=1; }
-    fi
-  done
-  [ "$failed" -eq 0 ] || die "one or more deploy hooks failed"
+# azc ARGS... : run az (with optional subscription) or print under --dry-run
+azc() { run az "$@" "${AZ_SUB[@]}"; }
 
-  # Render free tier cold-starts / rebuilds take minutes: long retry window.
-  for svc in $SERVICES; do
-    upper="$(printf '%s' "$svc" | tr '[:lower:]' '[:upper:]')"
-    var="RENDER_SMOKE_URL_${upper}"
-    url="${!var:-https://jp-${svc}.onrender.com/health}"
-    smoke "$url" "$retries" "$interval" || { log "smoke failed: $url"; failed=1; }
+az_host() {
+  if [ -n "${AZURE_VM_HOST:-}" ]; then AZ_HOST="$AZURE_VM_HOST"; return 0; fi
+  if [ "$DRY_RUN" -eq 1 ]; then AZ_HOST="<vm-fqdn>"; return 0; fi
+  AZ_HOST="$(az vm show -d -g "$AZ_RG" -n "$AZ_VM" "${AZ_SUB[@]}" --query "fqdns || publicIps" -o tsv)"
+  [ -n "$AZ_HOST" ] || die "could not resolve VM host (set AZURE_VM_HOST)"
+}
+
+az_ssh() { run ssh "${SSH_OPTS[@]}" "$AZ_USER@$AZ_HOST" "$@"; }
+
+az_wait_ssh() {
+  local i
+  if [ "$DRY_RUN" -eq 1 ]; then printf '[dry-run] wait for ssh %s@%s (up to 40 tries)\n' "$AZ_USER" "$AZ_HOST"; return 0; fi
+  for ((i = 1; i <= 40; i++)); do
+    if ssh "${SSH_OPTS[@]}" "$AZ_USER@$AZ_HOST" true 2>/dev/null; then log "ssh ready (attempt $i)"; return 0; fi
+    log "ssh waiting (attempt $i/40)"; sleep 5
   done
-  [ "$failed" -eq 0 ] || die "render smoke check failed — roll back via Render dashboard (Deploys > Rollback) or re-run with --tag <previous-sha>"
-  log "render deploy OK"
+  die "ssh to $AZ_HOST not available"
+}
+
+az_sync() {
+  local items=("$COMPOSE_FILE" "$INFRA_DIR/docker" "$SCRIPT_DIR/deploy.sh")
+  [ "$DRY_RUN" -eq 1 ] || [ -f "$ENV_FILE" ] || die "env file not found: $ENV_FILE"
+  az_ssh "mkdir -p '$AZ_DIR/envs' '$AZ_DIR/scripts'"
+  if command -v rsync >/dev/null 2>&1 || [ "$DRY_RUN" -eq 1 ]; then
+    local rs=(rsync -az -e "ssh ${SSH_OPTS[*]}")
+    run "${rs[@]}" "$COMPOSE_FILE" "$AZ_USER@$AZ_HOST:$AZ_DIR/"
+    run "${rs[@]}" --delete "$INFRA_DIR/docker/" "$AZ_USER@$AZ_HOST:$AZ_DIR/docker/"
+    run "${rs[@]}" "$SCRIPT_DIR/deploy.sh" "$AZ_USER@$AZ_HOST:$AZ_DIR/scripts/"
+    run "${rs[@]}" --chmod=F600 "$ENV_FILE" "$AZ_USER@$AZ_HOST:$AZ_DIR/envs/.env.prod"
+  else
+    run scp -r "${SSH_OPTS[@]}" "${items[@]}" "$AZ_USER@$AZ_HOST:$AZ_DIR/"
+    run scp "${SSH_OPTS[@]}" "$ENV_FILE" "$AZ_USER@$AZ_HOST:$AZ_DIR/envs/.env.prod"
+    az_ssh "chmod 600 '$AZ_DIR/envs/.env.prod'"
+  fi
+}
+
+az_ghcr_login() {
+  [ -n "${GHCR_USER:-}" ] && [ -n "${GHCR_TOKEN:-}" ] || return 0
+  if [ "$DRY_RUN" -eq 1 ]; then printf '[dry-run] ssh docker login ghcr.io -u <GHCR_USER> --password-stdin (token via stdin)\n'; return 0; fi
+  printf '%s' "$GHCR_TOKEN" | ssh "${SSH_OPTS[@]}" "$AZ_USER@$AZ_HOST" "docker login ghcr.io -u '$GHCR_USER' --password-stdin" >/dev/null
+}
+
+deploy_azure() {
+  az_cfg
+  case "$ACTION" in
+    up|rollback)
+      log "azure $ACTION: vm=$AZ_VM rg=$AZ_RG tag=${TAG:-latest}"
+      azc vm start -g "$AZ_RG" -n "$AZ_VM"
+      az_host; az_wait_ssh
+      az_sync; az_ghcr_login
+      local remote=(bash ./scripts/deploy.sh --env-file "envs/.env.prod")
+      [ -z "$TAG" ] || remote+=(--tag "$TAG")
+      [ -z "$RETRIES" ] || remote+=(--retries "$RETRIES")
+      [ -z "$INTERVAL" ] || remote+=(--interval "$INTERVAL")
+      az_ssh "cd '$AZ_DIR' && ${remote[*]} compose"
+      # external smoke through the public endpoint (needs gateway port open in NSG)
+      local gw_port="${GATEWAY_PORT:-5000}"
+      if [ -f "$ENV_FILE" ] && [ -z "${GATEWAY_PORT:-}" ]; then
+        gw_port="$(grep -E '^GATEWAY_PORT=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | sed 's/[[:space:]]*#.*//' | tr -d '"' || true)"; gw_port="${gw_port:-5000}"
+      fi
+      smoke "${AZURE_SMOKE_URL:-http://${AZ_HOST}:${gw_port}/health}" "${RETRIES:-30}" "${INTERVAL:-5}" \
+        || die "public smoke failed — check NSG/gateway bind; roll back: scripts/deploy.sh --tag <previous-sha> azure rollback"
+      log "azure $ACTION OK — remember to run: scripts/deploy.sh azure down"
+      ;;
+    down)
+      if [ "$COMPOSE_DOWN" -eq 1 ]; then
+        az_host
+        az_ssh "cd '$AZ_DIR' && docker compose -f docker-compose.prod.yml --env-file envs/.env.prod down" || log "compose down skipped (VM unreachable?)"
+      fi
+      azc vm deallocate -g "$AZ_RG" -n "$AZ_VM"
+      log "VM deallocated (only disk cost now)"
+      ;;
+    status)
+      azc vm get-instance-view -g "$AZ_RG" -n "$AZ_VM" --query "instanceView.statuses[?starts_with(code,'PowerState/')].displayStatus | [0]" -o tsv
+      az_host; log "host: $AZ_HOST"
+      az_ssh "cd '$AZ_DIR' && docker compose -f docker-compose.prod.yml --env-file envs/.env.prod ps" || log "VM not reachable (deallocated?)"
+      ;;
+  esac
 }
 
 case "$TARGET" in
   compose) deploy_compose ;;
-  render) deploy_render ;;
+  azure) deploy_azure ;;
 esac

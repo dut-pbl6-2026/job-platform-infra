@@ -42,12 +42,12 @@ docker compose down -v    # reset volumes (re-runs init.sql)
 ## Prod deploy + rollback (PBL6-51)
 
 - `docker-compose.prod.yml` (`name: job-platform-prod`, internal network `backend`): infra (postgres/redis/es/kafka, no host ports) + `auth gateway job search app profile notif web` from `${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-<svc>:${<SVC>_TAG:-${IMAGE_TAG:-latest}}`. Only gateway (`GATEWAY_PORT`, 5000) and web (`WEB_PORT`, 80) are published. Required vars fail fast: `JWT_SECRET POSTGRES_PASSWORD REDIS_PASSWORD CORS_ORIGINS SEARCH_INDEX_TOKEN PROFILE_ENCRYPTION_KEY`. Healthchecks use bash `/dev/tcp` (profile-svc image has no curl). ES is built locally from `docker/es` (not on GHCR).
-- `scripts/deploy.sh [--dry-run] [--tag T] compose|render`: compose = `pull` + `up -d --wait` + smoke retries; render = POST `RENDER_DEPLOY_HOOK_<SVC>` (secret, never printed) + smoke `jp-<svc>.onrender.com/health`. Always `--dry-run` first. Never deploy / call hooks from an agent session.
-- Rollback: `scripts/deploy.sh --tag <previous-sha> compose` (or Render Dashboard Rollback). Never `down -v` in prod. `render.yaml` mirrors service names/ports/upstreams; secrets only in dashboard.
+- `scripts/deploy.sh [--dry-run] [--tag T] compose` (any host: pull + `up -d --wait` + smoke retries) and `azure up|down|status|rollback` (az CLI + ssh; env `AZURE_RESOURCE_GROUP AZURE_VM_NAME AZURE_VM_SSH_USER AZURE_SSH_KEY [AZURE_SUBSCRIPTION_ID]`). `scripts/azure-provision.sh` creates RG/NSG/VM (B2ms, 64 GB, cloud-init Docker, auto-shutdown). Always `--dry-run` first. Agents never run these for real (cost + secrets).
+- Azure (student credit): ONE VM, run only while testing (~$0.09/h), `azure down` (deallocate) afterwards; rollback `--tag <previous-sha> azure rollback`; never `down -v`; rotate subscription via `AZURE_SUBSCRIPTION_ID` + re-provision. See README `Deploy on Azure`. Only auth-svc/gateway/job-svc currently publish GHCR images.
 
 ## K8s / deployment (SRS 8.6, 9)
 
-- Local: Compose hot-reload + `env_file`. Staging `Render Free 750h + Vercel` + `Supabase` 500MB + `Upstash` Redis + `Bonsai` ES 1GB + `Confluent` Kafka + `R2` 10GB — zero-cost (`docs/srs/en/9-infra-cost-analysis.md`).
+- Local: Compose hot-reload + `env_file`. Staging `Azure VM (student credit) + Vercel` + `Supabase` 500MB + `Upstash` Redis + `Bonsai` ES 1GB + `Confluent` Kafka + `R2` 10GB — zero-cost (`docs/srs/en/9-infra-cost-analysis.md`).
 - K8s NICE `K8S-01` (`docs/srs/en/5-nice-have-fr.md`) — manifests `Deployment/Service/Ingress/ConfigMap/Secret/HPA` not yet in repo; keep Compose parity, no hard-coded env vars (`docs/srs/en/6-nfr.md:PORT-02`).
 - CI `.github/workflows/ci.yml`: `cp .example→.env.dev`, `docker compose config -q`, `grep job_platform_auth`.
 

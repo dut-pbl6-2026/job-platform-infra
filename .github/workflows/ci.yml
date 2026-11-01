@@ -20,4 +20,7 @@ jobs:
       - name: Deploy script dry-run
         run: |
           bash -n scripts/deploy.sh
+          bash -n scripts/azure-provision.sh
           scripts/deploy.sh --dry-run --env-file "$RUNNER_TEMP/ci.env" compose
+          AZURE_RESOURCE_GROUP=rg AZURE_VM_NAME=vm AZURE_SSH_KEY=/dev/null scripts/deploy.sh --dry-run --env-file "$RUNNER_TEMP/ci.env" azure up
+          scripts/azure-provision.sh --dry-run
