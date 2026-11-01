@@ -24,3 +24,15 @@ jobs:
           scripts/deploy.sh --dry-run --env-file "$RUNNER_TEMP/ci.env" compose
           AZURE_RESOURCE_GROUP=rg AZURE_VM_NAME=vm AZURE_SSH_KEY=/dev/null scripts/deploy.sh --dry-run --env-file "$RUNNER_TEMP/ci.env" azure up
           scripts/azure-provision.sh --dry-run
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - name: Terraform fmt + validate
+        run: |
+          terraform -chdir=terraform fmt -check -recursive
+          terraform -chdir=terraform init -backend=false -input=false
+          terraform -chdir=terraform validate
+      - name: Lint workflows (actionlint)
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color

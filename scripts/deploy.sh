@@ -22,6 +22,7 @@ set -euo pipefail
 # Env (azure target): AZURE_RESOURCE_GROUP, AZURE_VM_NAME, AZURE_VM_SSH_USER (default azureuser), AZURE_SSH_KEY (path to
 #   private key), optional AZURE_SUBSCRIPTION_ID, AZURE_VM_HOST (override FQDN/IP), AZURE_REMOTE_DIR (default ~/job-platform),
 #   GHCR_USER + GHCR_TOKEN (only if images are private; token goes via ssh stdin, never argv).
+#   AZURE_SKIP_VM_POWER=1 (no az: VM already running; needs AZURE_VM_HOST; `up`/`rollback` only — used by the CI ssh fallback).
 # Env (compose target): values from --env-file; smoke URL override COMPOSE_SMOKE_URL (default http://localhost:${GATEWAY_PORT:-5000}/health).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -39,7 +40,7 @@ TARGET=""
 
 log() { printf '[deploy] %s\n' "$*"; }
 die() { printf '[deploy] ERROR: %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '4,26p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '4,27p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # run CMD... : execute, or print when --dry-run
 run() {
@@ -123,12 +124,19 @@ az_cfg() {
   AZ_USER="${AZURE_VM_SSH_USER:-azureuser}"; AZ_KEY="${AZURE_SSH_KEY:-}"
   AZ_DIR="${AZURE_REMOTE_DIR:-job-platform}"
   local v
+  SKIP_POWER="${AZURE_SKIP_VM_POWER:-0}"
+  if [ "$SKIP_POWER" = 1 ]; then
+    [ -n "${AZURE_VM_HOST:-}" ] || [ "$DRY_RUN" -eq 1 ] || die "AZURE_SKIP_VM_POWER=1 needs AZURE_VM_HOST"
+    case "$ACTION" in up|rollback) ;; *) die "AZURE_SKIP_VM_POWER=1 supports only up|rollback (down/status need az)" ;; esac
+    AZ_RG="${AZ_RG:-n/a}"; AZ_VM="${AZ_VM:-n/a}"
+  fi
   for v in AZURE_RESOURCE_GROUP AZURE_VM_NAME AZURE_SSH_KEY; do
+    [ "$SKIP_POWER" = 1 ] && [ "$v" != AZURE_SSH_KEY ] && continue
     if [ -z "${!v:-}" ]; then
       [ "$DRY_RUN" -eq 1 ] && log "dry-run: $v is not set (would fail on a real run)" || die "$v is not set"
     fi
   done
-  [ "$DRY_RUN" -eq 1 ] || command -v az >/dev/null 2>&1 || die "az CLI not found (https://aka.ms/installazurecli, then az login)"
+  [ "$DRY_RUN" -eq 1 ] || [ "$SKIP_POWER" = 1 ] || command -v az >/dev/null 2>&1 || die "az CLI not found (https://aka.ms/installazurecli, then az login)"
   [ "$DRY_RUN" -eq 1 ] || command -v ssh >/dev/null 2>&1 || die "ssh not found"
   AZ_RG="${AZ_RG:-<AZURE_RESOURCE_GROUP>}"; AZ_VM="${AZ_VM:-<AZURE_VM_NAME>}"; AZ_KEY="${AZ_KEY:-<AZURE_SSH_KEY>}"
   AZ_SUB=()
@@ -186,7 +194,7 @@ deploy_azure() {
   case "$ACTION" in
     up|rollback)
       log "azure $ACTION: vm=$AZ_VM rg=$AZ_RG tag=${TAG:-latest}"
-      azc vm start -g "$AZ_RG" -n "$AZ_VM"
+      [ "$SKIP_POWER" = 1 ] || azc vm start -g "$AZ_RG" -n "$AZ_VM"
       az_host; az_wait_ssh
       az_sync; az_ghcr_login
       local remote=(bash ./scripts/deploy.sh --env-file "envs/.env.prod")
