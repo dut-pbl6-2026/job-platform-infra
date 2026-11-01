@@ -37,6 +37,21 @@ docker compose up -d && docker compose ps   # postgres 5432, redis 6379, es 9200
 docker compose config -q                      # lint
 ```
 
+## Production deploy
+
+Prod stack = `docker-compose.prod.yml` (published GHCR images `ghcr.io/dut-pbl6-2026/job-platform-<svc>`, no dev-only services, no published DB ports, healthchecks + limits, required secrets via `${VAR:?}`) or Render (`render.yaml`, services `jp-*`). Both driven by `scripts/deploy.sh`.
+
+```bash
+# prod env (never commit): infisical export --env=prod --path=/ --format=dotenv > envs/.env.prod   (keys: envs/.env.prod.example)
+docker compose --env-file envs/.env.prod -f docker-compose.prod.yml config -q   # lint
+scripts/deploy.sh --dry-run compose                  # preview
+scripts/deploy.sh compose                            # pull + up -d --wait + smoke GET gateway /health (retries)
+scripts/deploy.sh --tag <git-sha> compose            # pin an image tag
+RENDER_DEPLOY_HOOK_AUTH=... scripts/deploy.sh render # one hook env var per service, then smoke check jp-*.onrender.com/health
+```
+
+Rollback: re-run with the previous known-good tag, `scripts/deploy.sh --tag <previous-sha> compose` (Render: `--tag <sha>` passes `ref=`, or Dashboard > Deploys > Rollback). DB volumes are untouched by deploys; never use `down -v` in prod.
+
 ## Troubleshooting
 
 - `port already allocated` → `docker compose down -v` or `lsof -i :5432`

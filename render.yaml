@@ -1,3 +1,7 @@
+# Render blueprint (PBL6-51) — trigger with scripts/deploy.sh render (RENDER_DEPLOY_HOOK_<SVC> per service).
+# Parity with docker-compose.prod.yml: same service names/ports (auth 5001, gateway 5000, job 5002, search 5003,
+# app 5004, profile 5005, notif 5006), /health probes, gateway upstreams. Web is on Vercel. Secrets (sync:false)
+# are set in the Render dashboard only — see envs/.env.prod.example for the key list.
 services:
   - type: web
     name: jp-auth
@@ -37,9 +41,19 @@ services:
         value: http://+:5000
       - key: GATEWAY_UPSTREAM_AUTH
         value: https://jp-auth.onrender.com
+      - key: GATEWAY_UPSTREAM_JOB
+        value: https://jp-job.onrender.com
+      - key: GATEWAY_UPSTREAM_SEARCH
+        value: https://jp-search.onrender.com
+      - key: GATEWAY_UPSTREAM_APP
+        value: https://jp-app.onrender.com
+      - key: GATEWAY_UPSTREAM_PROFILE
+        value: https://jp-profile.onrender.com
+      - key: GATEWAY_UPSTREAM_NOTIF
+        value: https://jp-notif.onrender.com
       - key: CORS_ORIGINS
         value: https://jp-web.vercel.app,https://jp-web-*.vercel.app,https://job-platform-web.vercel.app
-      # Secrets: JWT_SECRET (same as auth)
+      # Secrets (dashboard): JWT_SECRET (same as auth)
     autoDeploy: false
 
   - type: web

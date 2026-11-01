@@ -13,3 +13,11 @@ jobs:
         run: test -f envs/.env.dev.example && echo "env ok"
       - name: Check init.sql
         run: test -f docker/postgres/init.sql && grep -q "job_platform_auth" docker/postgres/init.sql
+      - name: Lint prod compose
+        run: |
+          printf '%s\n' JWT_SECRET=ci CORS_ORIGINS=https://ci.example POSTGRES_PASSWORD=ci REDIS_PASSWORD=ci SEARCH_INDEX_TOKEN=ci PROFILE_ENCRYPTION_KEY=ci > "$RUNNER_TEMP/ci.env"
+          docker compose --env-file "$RUNNER_TEMP/ci.env" -f docker-compose.prod.yml config -q && echo "prod compose ok"
+      - name: Deploy script dry-run
+        run: |
+          bash -n scripts/deploy.sh
+          scripts/deploy.sh --dry-run --env-file "$RUNNER_TEMP/ci.env" compose

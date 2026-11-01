@@ -39,6 +39,12 @@ docker compose config -q  # lint
 docker compose down -v    # reset volumes (re-runs init.sql)
 ```
 
+## Prod deploy + rollback (PBL6-51)
+
+- `docker-compose.prod.yml` (`name: job-platform-prod`, internal network `backend`): infra (postgres/redis/es/kafka, no host ports) + `auth gateway job search app profile notif web` from `${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-<svc>:${<SVC>_TAG:-${IMAGE_TAG:-latest}}`. Only gateway (`GATEWAY_PORT`, 5000) and web (`WEB_PORT`, 80) are published. Required vars fail fast: `JWT_SECRET POSTGRES_PASSWORD REDIS_PASSWORD CORS_ORIGINS SEARCH_INDEX_TOKEN PROFILE_ENCRYPTION_KEY`. Healthchecks use bash `/dev/tcp` (profile-svc image has no curl). ES is built locally from `docker/es` (not on GHCR).
+- `scripts/deploy.sh [--dry-run] [--tag T] compose|render`: compose = `pull` + `up -d --wait` + smoke retries; render = POST `RENDER_DEPLOY_HOOK_<SVC>` (secret, never printed) + smoke `jp-<svc>.onrender.com/health`. Always `--dry-run` first. Never deploy / call hooks from an agent session.
+- Rollback: `scripts/deploy.sh --tag <previous-sha> compose` (or Render Dashboard Rollback). Never `down -v` in prod. `render.yaml` mirrors service names/ports/upstreams; secrets only in dashboard.
+
 ## K8s / deployment (SRS 8.6, 9)
 
 - Local: Compose hot-reload + `env_file`. Staging `Render Free 750h + Vercel` + `Supabase` 500MB + `Upstash` Redis + `Bonsai` ES 1GB + `Confluent` Kafka + `R2` 10GB — zero-cost (`docs/srs/en/9-infra-cost-analysis.md`).
