@@ -36,7 +36,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -100,7 +100,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "expr": "up",
@@ -128,7 +128,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -163,10 +163,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_server_request_duration_seconds_count[5m])) by (service)",
+          "expr": "sum(rate(http_server_request_duration_seconds_count{http_route!~\"/metrics|/health\"}[5m])) by (service)",
           "legendFormat": "{{service}}",
           "refId": "A"
         }
@@ -177,7 +177,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -212,10 +212,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\"}[5m])) by (service) or on() vector(0)",
+          "expr": "sum(rate(http_server_request_duration_seconds_count{http_route!~\"/metrics|/health\",http_response_status_code=~\"5..\"}[5m])) by (service)",
           "legendFormat": "{{service}} (5xx)",
           "refId": "A"
         }
@@ -226,7 +226,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -261,10 +261,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, service))",
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{http_route!~\"/metrics|/health\"}[5m])) by (le, service))",
           "legendFormat": "{{service}} (p95)",
           "refId": "A"
         }
@@ -287,7 +287,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -322,11 +322,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "process_runtime_dotnet_gc_heap_size_bytes",
-          "legendFormat": "{{service}} - Heap",
+          "expr": "dotnet_gc_last_collection_heap_size_bytes",
+          "legendFormat": "{{service}} - {{gc_heap_generation}}",
           "refId": "A"
         }
       ],
@@ -336,7 +336,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -371,10 +371,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "process_runtime_dotnet_threadpool_thread_count",
+          "expr": "dotnet_thread_pool_thread_count_total",
           "legendFormat": "{{service}} - ThreadPool Threads",
           "refId": "A"
         }
@@ -411,3 +411,4 @@
   "uid": "job-platform-overview",
   "version": 1
 }
+

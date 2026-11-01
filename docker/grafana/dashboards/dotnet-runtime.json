@@ -36,7 +36,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -71,11 +71,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "process_runtime_dotnet_gc_heap_size_bytes{service=~\"$service\"}",
-          "legendFormat": "{{service}} - {{generation}}",
+          "expr": "dotnet_gc_last_collection_heap_size_bytes{service=~\"$service\"}",
+          "legendFormat": "{{service}} - {{gc_heap_generation}}",
           "refId": "A"
         }
       ],
@@ -85,7 +85,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -120,11 +120,11 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(process_runtime_dotnet_gc_collections_count{service=~\"$service\"}[5m])",
-          "legendFormat": "{{service}} - Gen {{generation}} collections/sec",
+          "expr": "rate(dotnet_gc_collections_total{service=~\"$service\"}[5m])",
+          "legendFormat": "{{service}} - Gen {{gc_heap_generation}} collections/sec",
           "refId": "A"
         }
       ],
@@ -146,7 +146,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -181,10 +181,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "process_runtime_dotnet_threadpool_thread_count{service=~\"$service\"}",
+          "expr": "dotnet_thread_pool_thread_count_total{service=~\"$service\"}",
           "legendFormat": "{{service}} - Threads",
           "refId": "A"
         }
@@ -195,7 +195,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -230,10 +230,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "process_runtime_dotnet_threadpool_queue_length{service=~\"$service\"}",
+          "expr": "dotnet_thread_pool_queue_length_total{service=~\"$service\"}",
           "legendFormat": "{{service}} - Queue Length",
           "refId": "A"
         }
@@ -244,7 +244,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -279,10 +279,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(process_runtime_dotnet_threadpool_completed_items_count{service=~\"$service\"}[5m])",
+          "expr": "rate(dotnet_thread_pool_work_item_count_total{service=~\"$service\"}[5m])",
           "legendFormat": "{{service}} - Items Completed/s",
           "refId": "A"
         }
@@ -305,7 +305,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -340,10 +340,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(process_runtime_dotnet_process_cpu_time_seconds{service=~\"$service\"}[5m])",
+          "expr": "sum by (service) (rate(dotnet_process_cpu_time_seconds_total{service=~\"$service\"}[5m]))",
           "legendFormat": "{{service}} - CPU Usage",
           "refId": "A"
         }
@@ -354,7 +354,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -389,10 +389,10 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(process_runtime_dotnet_exceptions_count{service=~\"$service\"}[5m])",
+          "expr": "rate(dotnet_exceptions_total{service=~\"$service\"}[5m])",
           "legendFormat": "{{service}} - Exceptions/sec",
           "refId": "A"
         }
@@ -419,7 +419,7 @@
         },
         "datasource": {
           "type": "prometheus",
-          "uid": "Prometheus"
+          "uid": "prometheus"
         },
         "definition": "label_values(up, service)",
         "hide": 0,
@@ -458,3 +458,4 @@
   "uid": "job-platform-dotnet-runtime",
   "version": 1
 }
+

@@ -62,13 +62,24 @@ All HTTP inbound endpoints automatically track:
 
 ### .NET Runtime Metrics
 
-Collected via `OpenTelemetry.Instrumentation.Runtime`:
-- `process_runtime_dotnet_gc_heap_size_bytes`: Managed heap size per generation (Gen 0, Gen 1, Gen 2, LOH).
-- `process_runtime_dotnet_gc_collections_count`: Number of GC cycles completed per generation.
-- `process_runtime_dotnet_threadpool_thread_count`: Active worker and completion port threads.
-- `process_runtime_dotnet_threadpool_queue_length`: Pending work items in thread pool queue.
-- `process_runtime_dotnet_exceptions_count`: Thrown exceptions frequency.
-- `process_runtime_dotnet_process_cpu_time_seconds`: Total CPU execution time.
+Collected via `OpenTelemetry.Instrumentation.Runtime` (exported from the .NET `System.Runtime` meter,
+so the names below are the ones you will actually see on `/metrics`):
+
+- `dotnet_gc_last_collection_heap_size_bytes`: Managed heap size per `gc_heap_generation` (`gen0`, `gen1`, `gen2`, `loh`).
+- `dotnet_gc_collections_total`: Number of GC cycles completed per `gc_heap_generation`.
+- `dotnet_thread_pool_thread_count_total`: Current worker/completion-port thread count.
+- `dotnet_thread_pool_queue_length_total`: Pending work items in the thread pool queue.
+- `dotnet_thread_pool_work_item_count_total`: Work items processed by the thread pool (counter).
+- `dotnet_exceptions_total`: Thrown exceptions, labelled by `error_type`.
+- `dotnet_process_cpu_time_seconds_total`: CPU time split by `cpu_mode` (`user`/`system`).
+- `dotnet_process_memory_working_set_bytes`, `dotnet_assembly_count`, `dotnet_timer_count`: extra runtime detail.
+
+> Several of these carry a `_total` suffix even though they are instantaneous values
+> (`thread_pool_thread_count_total`). Use the raw value for those; use `rate()` only for the true counters.
+
+> **Metric names are version-dependent.** They are defined by the OpenTelemetry runtime instrumentation and
+> change between releases. Before editing a dashboard, scrape a service and confirm the name:
+> `curl -s http://localhost:5003/metrics | grep '^# TYPE'`.
 
 ---
 
@@ -80,6 +91,30 @@ Collected via `OpenTelemetry.Instrumentation.Runtime`:
 | **Prometheus** | [http://localhost:9090](http://localhost:9090) | None | PromQL console & expression browser |
 | **Prometheus Targets** | [http://localhost:9090/targets](http://localhost:9090/targets) | None | Health status of microservice scrapers |
 
+> These URLs and the `admin`/`admin` login belong to the **local development** stack started by
+> `docker compose up -d`; the ports are published on `localhost` only. Nothing here is deployed publicly —
+> do not publish Grafana/Prometheus on a public interface, and change the Grafana password (or set
+> `GF_SECURITY_ADMIN_PASSWORD`) before running the stack anywhere shared.
+
+### Scrape target prerequisite — `/metrics` must be reachable
+
+Each service exposes `GET /metrics` from the OpenTelemetry Prometheus exporter. Prometheus only collects from
+a service whose app is actually listening on the expected port, so:
+
+- Running in Docker: the compose service port must match `docker/prometheus/prometheus.yml` (e.g. `notif:5006`).
+- Running on the host with `dotnet run`: the API's `Properties/launchSettings.json` pins the documented port
+  (search `5003`, profile `5005`, notif `5006`). Prometheus scrapes those via `host.docker.internal:<port>`.
+
+`/metrics` is disabled in the `Production` environment unless explicitly enabled:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `METRICS_ENABLED` | `true` (non-Production), `false` (Production) | `false` ⇒ `GET /metrics` returns `404` |
+
+Enable it for a production deployment (`METRICS_ENABLED=true`) only when the endpoint is reachable from the
+Prometheus scrape network and not from the public internet; every service is otherwise publicly deployed, so
+leaving it off keeps process/runtime internals out of the public surface.
+
 ---
 
 ## 4. Provisioned Dashboards
@@ -87,23 +122,23 @@ Collected via `OpenTelemetry.Instrumentation.Runtime`:
 ### 4.1 System Overview (`job-platform-overview`)
 
 Designed for an on-call or operations engineer to quickly diagnose high-level platform health:
-- **Service Health:** Instant stat cards showing `UP` (1, green) or `DOWN` (0, red) for all microservices.
-- **Request Rate (req/s):** Throughput across services over a 5m sliding window (`sum(rate(http_server_request_duration_seconds_count[5m])) by (service)`).
-- **Error Rate (5xx req/s):** Server failure rate (`http_response_status_code=~"5.."`).
-- **P95 Latency:** 95th percentile latency per service (`histogram_quantile(0.95, ...)`).
-- **GC Heap Size:** Heap memory footprint across services.
-- **Active Threads:** Worker thread count across services.
+- **Service Health:** Instant stat cards showing `UP` (1, green) or `DOWN` (0, red) for all microservices (`up`).
+- **Request Rate (req/s):** Throughput across services over a 5m sliding window (`sum(rate(http_server_request_duration_seconds_count{http_route!~"/metrics|/health"}[5m])) by (service)`). Scrape and probe traffic is excluded so the panel reflects real user requests.
+- **Error Rate (5xx req/s):** Server failure rate (`http_response_status_code=~"5.."`, same route filter).
+- **P95 Latency:** 95th percentile latency per service (`histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{http_route!~"/metrics|/health"}[5m])) by (le, service))`).
+- **GC Heap Size:** `dotnet_gc_last_collection_heap_size_bytes` per `gc_heap_generation`.
+- **Active Threads:** `dotnet_thread_pool_thread_count_total` per service.
 
 ### 4.2 .NET Runtime (`job-platform-dotnet-runtime`)
 
 Designed for in-depth CLR debugging and performance profiling:
-- **Service Selector:** Multi-select variable filtering metrics by microservice.
-- **GC Heap Size by Generation:** Breakdown of Gen 0, Gen 1, Gen 2, and Large Object Heap (LOH).
-- **GC Collection Rate:** Frequency of Gen 0/1/2 collections per second.
-- **ThreadPool Threads & Queue:** Thread allocation vs work item queues.
-- **ThreadPool Completed Items / sec:** Throughput of asynchronous operations.
-- **Process CPU Usage:** Percentage of CPU utilized by the CLR process.
-- **Exception Rate:** Number of exceptions thrown per second.
+- **Service Selector:** Multi-select variable filtering metrics by microservice (`label_values(up, service)`).
+- **GC Heap Size by Generation:** `dotnet_gc_last_collection_heap_size_bytes` broken down by `gc_heap_generation`.
+- **GC Collection Rate:** `rate(dotnet_gc_collections_total[5m])` per generation.
+- **ThreadPool Threads & Queue:** `dotnet_thread_pool_thread_count_total` vs `dotnet_thread_pool_queue_length_total`.
+- **ThreadPool Completed Items / sec:** `rate(dotnet_thread_pool_work_item_count_total[5m])`.
+- **Process CPU Usage:** `sum by (service) (rate(dotnet_process_cpu_time_seconds_total[5m]))`, split by `cpu_mode`.
+- **Exception Rate:** `rate(dotnet_exceptions_total[5m])` per `error_type`.
 
 ---
 
@@ -165,25 +200,23 @@ groups:
   - name: service_symptom_alerts
     rules:
       - alert: HighHttpErrorRate
-        expr: sum(rate(http_server_request_duration_seconds_count{http_response_status_code=~"5.."}[5m])) by (service)
-              / sum(rate(http_server_request_duration_seconds_count[5m])) by (service) > 0.05
+        expr: sum(rate(http_server_request_duration_seconds_count{http_route!~"/metrics|/health",http_response_status_code=~"5.."}[5m])) by (service)
+              / sum(rate(http_server_request_duration_seconds_count{http_route!~"/metrics|/health"}[5m])) by (service) > 0.05
         for: 2m
         labels:
           severity: page
         annotations:
           summary: "Service {{ $labels.service }} has > 5% 5xx error rate"
           description: "High HTTP 5xx error rate observed on {{ $labels.service }} for over 2 minutes."
-          runbook_url: "docs/runbooks/high_http_error_rate.md"
 
       - alert: HighP95Latency
-        expr: histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, service)) > 2.0
+        expr: histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{http_route!~"/metrics|/health"}[5m])) by (le, service)) > 2.0
         for: 3m
         labels:
           severity: page
         annotations:
           summary: "Service {{ $labels.service }} P95 latency > 2s"
           description: "P95 request latency on {{ $labels.service }} has exceeded 2 seconds for 3 minutes."
-          runbook_url: "docs/runbooks/high_latency.md"
 
       - alert: ServiceDown
         expr: up == 0
@@ -193,5 +226,4 @@ groups:
         annotations:
           summary: "Service {{ $labels.service }} is DOWN"
           description: "Prometheus cannot scrape {{ $labels.service }} on target {{ $labels.instance }}."
-          runbook_url: "docs/runbooks/service_down.md"
 ```

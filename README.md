@@ -49,7 +49,24 @@ The monitoring stack collects OpenTelemetry metrics from all 7 .NET backend serv
 | **Prometheus Targets** | `http://localhost:9090/targets` | _None_ | Scrape health inspection |
 | **Grafana** | `http://localhost:3001` | `admin` / `admin` | Dashboards & visualization |
 
-> **Note:** Port `3001` is used for Grafana on the host (mapped to container port 3000) to avoid port collisions with the local React web frontend dev server.
+> **Note:** Port `3001` is used for Grafana on the host (mapped to container port 3000) to avoid port collisions with the local React web frontend dev server. The `admin`/`admin` login is for **local development only** — set `GF_SECURITY_ADMIN_PASSWORD` before running this stack anywhere shared, and never expose Prometheus/Grafana publicly.
+
+### Scrape targets
+
+Prometheus scrapes each service on its documented port (`docker/prometheus/prometheus.yml`):
+gateway `5000`, auth `5001`, job `5002`, search `5003`, app `5004`, profile `5005`, notif `5006`.
+Running services on the host with `dotnet run` works because each API's `Properties/launchSettings.json`
+pins those ports; Docker services use their compose DNS names instead.
+
+`/metrics` is gated by configuration and **defaults to off in Production**:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `METRICS_ENABLED` | `true` (non-Production), `false` (Production) | `false` ⇒ `GET /metrics` returns `404` |
+
+Only enable it in a deployed environment (`METRICS_ENABLED=true`) when Prometheus can reach the service over
+a private network — all 7 services are publicly deployed on Render, so leaving it off keeps runtime internals
+out of the public surface.
 
 ### Dashboards
 
@@ -60,14 +77,17 @@ Dashboards are automatically provisioned from `docker/grafana/dashboards/`:
    - **Request Rate:** Aggregated requests/second per service (`http_server_request_duration_seconds_count`).
    - **Error Rate:** 5xx response rate per service.
    - **P95 Latency:** 95th-percentile response time computed across request duration buckets.
-   - **GC Heap Size:** Heap memory usage per service.
-   - **Active Threads:** ThreadPool thread counts.
+   - **GC Heap Size:** `dotnet_gc_last_collection_heap_size_bytes` per `gc_heap_generation`.
+   - **Active Threads:** `dotnet_thread_pool_thread_count_total` per service.
 
 2. **Job Platform - .NET Runtime** (`job-platform-dotnet-runtime`)
-   - **GC Heap Size by Generation:** Gen 0, Gen 1, Gen 2, and LOH heap memory.
-   - **GC Collections Rate:** Gen 0/1/2 collection frequencies.
-   - **ThreadPool Threads & Queue:** Thread pool utilization and pending work queue length.
-   - **Process CPU Usage & Exceptions:** Process CPU time rate and exception thrown rate.
+   - **GC Heap Size by Generation:** `dotnet_gc_last_collection_heap_size_bytes` split by `gc_heap_generation` (gen0/gen1/gen2/loh).
+   - **GC Collections Rate:** `rate(dotnet_gc_collections_total[5m])` per generation.
+   - **ThreadPool Threads & Queue:** `dotnet_thread_pool_thread_count_total` vs `dotnet_thread_pool_queue_length_total`.
+   - **Process CPU Usage & Exceptions:** `rate(dotnet_process_cpu_time_seconds_total[5m])` and `rate(dotnet_exceptions_total[5m])`.
+
+> Metric names come from the .NET `System.Runtime` meter and change between OpenTelemetry releases — confirm with
+> `curl -s http://localhost:5003/metrics | grep '^# TYPE'` before editing a dashboard.
 
 See [docs/monitoring.md](docs/monitoring.md) for full monitoring architecture, adding custom metrics, and alert rules.
 

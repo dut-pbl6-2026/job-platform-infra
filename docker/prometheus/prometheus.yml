@@ -51,3 +51,4 @@ scrape_configs:
       - targets: ['host.docker.internal:5006']
         labels:
           service: notif
+
