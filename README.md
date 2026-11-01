@@ -52,7 +52,7 @@ Image gaps: only auth-svc, gateway and job-svc workflows publish to GHCR today; 
 
 ## Deploy on Azure (student credit)
 
-Design: ONE Ubuntu 24.04 VM (Standard_B2ms, 2 vCPU / 8 GB, 64 GB StandardSSD) running the whole compose stack; start it only when testing, deallocate afterwards. Cost: ~$0.09/h compute while running (~$2 for a 24 h test day), only the disk (~$5-8/mo) + DNS-labelled dynamic IP while deallocated. A nightly `az vm auto-shutdown` (default 22:00 Vietnam time) is the safety net. Requires `az login` and an SSH key.
+Design: ONE Ubuntu 24.04 VM (Standard_B2ms, 2 vCPU / 8 GB, 64 GB StandardSSD) running the whole compose stack; start it only when testing, deallocate afterwards. Cost: ~$0.09/h compute while running (~$2 for a 24 h test day), only the disk (~$5-8/mo) + the Standard static public IP with DNS label (~$3.6/mo) while deallocated (~$9-12/mo total). A nightly `az vm auto-shutdown` (default 22:00 Vietnam time) is the safety net. Requires `az login` and an SSH key.
 
 ```bash
 # 0. check what the student subscription allows (regions/SKUs/quota are restricted)
