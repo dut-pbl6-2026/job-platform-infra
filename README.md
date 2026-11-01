@@ -55,8 +55,8 @@ The monitoring stack collects OpenTelemetry metrics from all 7 .NET backend serv
 
 Prometheus scrapes each service on its documented port (`docker/prometheus/prometheus.yml`):
 gateway `5000`, auth `5001`, job `5002`, search `5003`, app `5004`, profile `5005`, notif `5006`.
-Running services on the host with `dotnet run` works because each API's `Properties/launchSettings.json`
-pins those ports; Docker services use their compose DNS names instead.
+The host-run services (job `5002`, search `5003`, app `5004`, profile `5005`, notif `5006`) pin those ports in
+`Properties/launchSettings.json`; gateway and auth are scraped as compose containers (`gateway:5000`, `auth:5001`).
 
 `/metrics` is gated by configuration and **defaults to off in Production**:
 

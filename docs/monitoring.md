@@ -101,9 +101,10 @@ so the names below are the ones you will actually see on `/metrics`):
 Each service exposes `GET /metrics` from the OpenTelemetry Prometheus exporter. Prometheus only collects from
 a service whose app is actually listening on the expected port, so:
 
-- Running in Docker: the compose service port must match `docker/prometheus/prometheus.yml` (e.g. `notif:5006`).
-- Running on the host with `dotnet run`: the API's `Properties/launchSettings.json` pins the documented port
-  (search `5003`, profile `5005`, notif `5006`). Prometheus scrapes those via `host.docker.internal:<port>`.
+- Running in Docker: the compose service port must match `docker/prometheus/prometheus.yml` (gateway `5000`,
+  auth `5001`).
+- Running on the host with `dotnet run`: job `5002`, search `5003`, app `5004`, profile `5005`, and notif `5006`
+  pin their ports in `Properties/launchSettings.json`; Prometheus scrapes them via `host.docker.internal:<port>`.
 
 `/metrics` is disabled in the `Production` environment unless explicitly enabled:
 
