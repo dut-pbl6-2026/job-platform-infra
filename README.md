@@ -37,79 +37,59 @@ docker compose up -d && docker compose ps   # postgres 5432, redis 6379, es 9200
 docker compose config -q                      # lint
 ```
 
-## Production deploy
+## Monitoring Stack (Prometheus + Grafana)
 
-Prod stack = `docker-compose.prod.yml` (published GHCR images `ghcr.io/dut-pbl6-2026/job-platform-{auth-svc,job-svc,search-svc,app-svc,profile-svc,notif-svc,gateway,web}`, no dev-only services, no published DB ports, healthchecks + limits, required secrets via `${VAR:?}`). `scripts/deploy.sh compose` runs it on any docker host; `scripts/deploy.sh azure ...` drives an Azure VM.
+The monitoring stack collects OpenTelemetry metrics from all 7 .NET backend services and visualizes them on Grafana.
 
-```bash
-# prod env (never commit): infisical export --env=prod --path=/ --format=dotenv > envs/.env.prod   (keys: envs/.env.prod.example)
-docker compose --env-file envs/.env.prod -f docker-compose.prod.yml config -q   # lint
-scripts/deploy.sh --dry-run compose      # preview
-scripts/deploy.sh --tag <git-sha> compose  # pull + up -d --wait + smoke GET gateway /health (retries)
-```
+### Endpoints & Credentials
 
-Image gaps: only auth-svc, gateway and job-svc workflows publish to GHCR today; search/app/profile/notif/web have no publish job yet, so `pull` fails for them until one is added (tags published: long sha + `latest`).
+| Service | URL | Credentials | Purpose |
+|---------|-----|-------------|---------|
+| **Prometheus** | `http://localhost:9090` | _None_ | Metrics TSDB & scraper |
+| **Prometheus Targets** | `http://localhost:9090/targets` | _None_ | Scrape health inspection |
+| **Grafana** | `http://localhost:3001` | `admin` / `admin` | Dashboards & visualization |
 
-## Deploy on Azure (student credit)
+> **Note:** Port `3001` is used for Grafana on the host (mapped to container port 3000) to avoid port collisions with the local React web frontend dev server. The `admin`/`admin` login is for **local development only** — set `GF_SECURITY_ADMIN_PASSWORD` before running this stack anywhere shared, and never expose Prometheus/Grafana publicly.
 
-Design: ONE Ubuntu 24.04 VM (Standard_B2ms, 2 vCPU / 8 GB, 64 GB StandardSSD) running the whole compose stack; provisioned once with Terraform (`terraform/`), then started only when testing and deallocated afterwards (`scripts/deploy.sh azure up|down`, or the `deploy-azure` workflow). Cost: ~$0.09/h compute while running (~$2 for a 24 h test day); while deallocated only the disk (~$5-8/mo) plus the Standard static public IP (~$3.6/mo) bill. A nightly auto-shutdown (default 22:00 Vietnam = 15:00 UTC) is the safety net. Stopping the VM from inside the OS does NOT stop billing: use `azure down`.
+### Scrape targets
 
-### 1. Provision (Terraform, once per subscription)
+Prometheus scrapes each service on its documented port (`docker/prometheus/prometheus.yml`):
+gateway `5000`, auth `5001`, job `5002`, search `5003`, app `5004`, profile `5005`, notif `5006`.
+The host-run services (job `5002`, search `5003`, app `5004`, profile `5005`, notif `5006`) pin those ports in
+`Properties/launchSettings.json`; gateway and auth are scraped as compose containers (`gateway:5000`, `auth:5001`).
 
-```bash
-mise install                                  # terraform 1.9.8
-az login && az account show --query id -o tsv # pick the student subscription
-# Check what the student subscription allows (regions/SKUs/quota are restricted):
-az vm list-skus -l southeastasia --size Standard_B2 --resource-type virtualMachines -o table
-az vm list-usage -l southeastasia -o table | grep -i -E 'Total Regional|Standard B'
+`/metrics` is gated by configuration and **defaults to off in Production**:
 
-cd terraform
-cp envs/sub1.tfvars.example envs/sub1.tfvars  # edit: subscription_id, ssh_public_key, admin_cidr (gitignored)
-terraform init
-terraform workspace select -or-create sub1    # one state per subscription (local backend)
-terraform plan  -var-file=envs/sub1.tfvars
-terraform apply -var-file=envs/sub1.tfvars    # prints fqdn, ssh_command, resource_group, vm_name
-```
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `METRICS_ENABLED` | `true` (non-Production), `false` (Production) | `false` ⇒ `GET /metrics` returns `404` |
 
-Optional remote state: `terraform/backend.azurerm.hcl.example` (one key per subscription, e.g. `-backend-config="key=sub1.tfstate"`). `scripts/azure-provision.sh` (az CLI, idempotent, `--dry-run`) is kept only as a no-Terraform fallback; Terraform is the supported path. Tear everything down with `terraform destroy -var-file=envs/sub1.tfvars` (deletes the disk/data).
+Only enable it in a deployed environment (`METRICS_ENABLED=true`) when Prometheus can reach the service over
+a private network — all 7 services are publicly deployed on Render, so leaving it off keeps runtime internals
+out of the public surface.
 
-### 2. Run tests on the VM
+### Dashboards
 
-```bash
-export AZURE_RESOURCE_GROUP=rg-jobplatformsub1 AZURE_VM_NAME=vm-jobplatformsub1 AZURE_VM_SSH_USER=azureuser AZURE_SSH_KEY=~/.ssh/id_ed25519
-scripts/deploy.sh --dry-run azure up
-scripts/deploy.sh azure up               # start VM, wait SSH, sync compose+env, pull, up -d --wait, smoke http://<fqdn>:5000/health
-scripts/deploy.sh azure status
-scripts/deploy.sh azure down             # ALWAYS when finished (add --compose-down to stop containers first)
-```
+Dashboards are automatically provisioned from `docker/grafana/dashboards/`:
 
-- Rollback: `scripts/deploy.sh --tag <previous-sha> azure rollback`. Volumes persist across deallocate; never `down -v`.
-- Private GHCR packages: export `GHCR_USER` + `GHCR_TOKEN` (PAT `read:packages`); the token goes over ssh stdin, never argv.
+1. **Job Platform - System Overview** (`job-platform-overview`)
+   - **Service Health:** Status of each target (`UP` / `DOWN`).
+   - **Request Rate:** Aggregated requests/second per service (`http_server_request_duration_seconds_count`).
+   - **Error Rate:** 5xx response rate per service.
+   - **P95 Latency:** 95th-percentile response time computed across request duration buckets.
+   - **GC Heap Size:** `dotnet_gc_last_collection_heap_size_bytes` per `gc_heap_generation`.
+   - **Active Threads:** `dotnet_thread_pool_thread_count_total` per service.
 
-### 3. GitHub Actions
+2. **Job Platform - .NET Runtime** (`job-platform-dotnet-runtime`)
+   - **GC Heap Size by Generation:** `dotnet_gc_last_collection_heap_size_bytes` split by `gc_heap_generation` (gen0/gen1/gen2/loh).
+   - **GC Collections Rate:** `rate(dotnet_gc_collections_total[5m])` per generation.
+   - **ThreadPool Threads & Queue:** `dotnet_thread_pool_thread_count_total` vs `dotnet_thread_pool_queue_length_total`.
+   - **Process CPU Usage & Exceptions:** `rate(dotnet_process_cpu_time_seconds_total[5m])` and `rate(dotnet_exceptions_total[5m])`.
 
-Workflows: `terraform.yml` (PR: fmt + validate always, plan only if configured; `workflow_dispatch` action=plan|apply, apply runs in Environment `production`) and `deploy-azure.yml` (`workflow_dispatch`: action up|down|status|rollback, image_tag, auto_deallocate_after_hours; Environment `production`; concurrency group `deploy-azure`; smoke `/health` and `/health/ready`, the latter enforced only when repo variable `REQUIRE_HEALTH_READY=true`).
+> Metric names come from the .NET `System.Runtime` meter and change between OpenTelemetry releases — confirm with
+> `curl -s http://localhost:5003/metrics | grep '^# TYPE'` before editing a dashboard.
 
-Setup (OIDC, preferred):
-```bash
-az ad app create --display-name job-platform-gha                       # note appId
-az ad sp create --id <appId>
-az role assignment create --assignee <appId> --role Contributor --scope /subscriptions/<sub-id>/resourceGroups/rg-jobplatformsub1
-# federated credentials (subject must match how the job runs):
-#   repo:dut-pbl6-2026/job-platform-infra:environment:production   (deploy-azure, terraform apply)
-#   repo:dut-pbl6-2026/job-platform-infra:pull_request             (terraform plan on PRs)
-az ad app federated-credential create --id <appId> --parameters '{"name":"gha-prod","issuer":"https://token.actions.githubusercontent.com","subject":"repo:dut-pbl6-2026/job-platform-infra:environment:production","audiences":["api://AzureADTokenExchange"]}'
-```
-- Secrets: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_SSH_PRIVATE_KEY`, `PROD_ENV_FILE` (full content of `envs/.env.prod`, from Infisical prod).
-- Variables: `AZURE_RESOURCE_GROUP`, `AZURE_VM_NAME`, `AZURE_VM_SSH_USER`, `TF_SSH_PUBLIC_KEY`, `TF_ADMIN_CIDR` (use a CIDR that covers GitHub runners only if you want CI SSH, otherwise run deploys locally), remote state `TFSTATE_RESOURCE_GROUP` / `TFSTATE_STORAGE_ACCOUNT` / `TFSTATE_CONTAINER` / `TFSTATE_KEY` (CI plan/apply require remote state), optional `GATEWAY_PORT`, `REQUIRE_HEALTH_READY`.
-- Settings > Environments > `production`: add required reviewers (gates deploy and apply).
-- Caveat: GitHub-hosted runner IPs are not in `admin_cidr`, so CI SSH to the VM needs port 22 reachable from runners (widen `admin_cidr` temporarily, or use a self-hosted runner). Student tenants may forbid app registrations (`az ad app create` fails): then use the SSH-only fallback below.
-- Fallback without OIDC/az (student tenant forbids app registrations): leave the three AZURE_* OIDC secrets unset and set `AZURE_VM_HOST` (variable) + `AZURE_SSH_PRIVATE_KEY` + `PROD_ENV_FILE`. The workflow then runs `deploy.sh` with `AZURE_SKIP_VM_POWER=1` against an already running VM (only `up`/`rollback`; start/deallocate need `az`, do them locally with `scripts/deploy.sh azure up|down` or the portal).
-- Auto-deallocate: no `sleep` jobs. `auto_deallocate_after_hours=N` (OIDC mode) re-sets the VM's native Azure auto-shutdown to now+N hours (daily recurrence), and the Terraform nightly schedule remains the fallback; a later `terraform apply` resets it to `auto_shutdown_time`.
-
-### 4. Rotating student subscriptions
-
-Each of the 3 subscriptions has its own tfvars (`envs/sub1|sub2|sub3.tfvars`) and its own Terraform workspace/state key. When credit runs low: `az login` into the next account, `terraform workspace select -or-create sub2`, `terraform apply -var-file=envs/sub2.tfvars`, update `AZURE_*` env vars/secrets (subscription id, resource group `rg-<prefix>`, VM name `vm-<prefix>`), run `deploy.sh azure up`. Data does not migrate between subscriptions: re-seed. `terraform destroy` the exhausted one if still allowed.
+See [docs/monitoring.md](docs/monitoring.md) for full monitoring architecture, adding custom metrics, and alert rules.
 
 ## Troubleshooting
 

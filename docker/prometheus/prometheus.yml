@@ -1,0 +1,54 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'gateway'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['gateway:5000']
+        labels:
+          service: gateway
+
+  - job_name: 'auth-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['auth:5001']
+        labels:
+          service: auth
+
+  - job_name: 'job-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:5002']
+        labels:
+          service: job
+
+  - job_name: 'search-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:5003']
+        labels:
+          service: search
+
+  - job_name: 'app-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:5004']
+        labels:
+          service: app
+
+  - job_name: 'profile-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:5005']
+        labels:
+          service: profile
+
+  - job_name: 'notif-svc'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:5006']
+        labels:
+          service: notif
+
