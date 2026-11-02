@@ -1,37 +1,78 @@
 name: ci
-on: { push: { branches: [main] }, pull_request: { branches: [main] } }
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
+      - name: Lint workflows (actionlint)
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+
       - name: Prepare env
         run: cp envs/.env.dev.example envs/.env.dev
+
       - name: Lint compose
         run: docker compose config -q && echo "compose ok"
-      - name: Verify env sync
-        run: test -f envs/.env.dev.example && echo "env ok"
+
+      - name: Verify env setup
+        run: |
+          test -f envs/.env.dev.example
+          test -f envs/.env.dev
+          echo "env ok"
+
       - name: Check init.sql
-        run: test -f docker/postgres/init.sql && grep -q "job_platform_auth" docker/postgres/init.sql
+        run: |
+          test -f docker/postgres/init.sql
+          grep -q "job_platform_auth" docker/postgres/init.sql
+
       - name: Validate Grafana dashboards
         run: |
           python3 - <<'PY'
-          import glob, json, sys
+          import glob
+          import json
+          import sys
+
           files = sorted(glob.glob('docker/grafana/dashboards/*.json'))
+
           if not files:
               sys.exit('no dashboard JSON files found')
+
           for f in files:
               with open(f) as fh:
                   doc = json.load(fh)
-              panels = [p for p in doc.get('panels', []) if p.get('type') != 'row']
+
+              panels = [
+                  p for p in doc.get('panels', [])
+                  if p.get('type') != 'row'
+              ]
+
               if not panels:
                   sys.exit(f'{f}: no data panels')
+
               for p in panels:
-                  exprs = [t.get('expr') for t in p.get('targets', [])]
+                  exprs = [
+                      t.get('expr')
+                      for t in p.get('targets', [])
+                  ]
+
                   if not exprs or not all(exprs):
-                      sys.exit(f'{f}: panel {p.get("title")!r} has no query')
+                      sys.exit(
+                          f'{f}: panel {p.get("title")!r} has no query'
+                      )
+
               print(f'ok {f}: {len(panels)} panels')
           PY
+
       - name: Guard against stale runtime metric names
         run: |
           if grep -rn "process_runtime_dotnet" docker/grafana docs README.md; then
@@ -39,3 +80,51 @@ jobs:
             exit 1
           fi
           echo "metric names ok"
+
+      - name: Lint prod compose
+        run: |
+          printf '%s\n' \
+            JWT_SECRET=ci \
+            CORS_ORIGINS=https://ci.example \
+            POSTGRES_PASSWORD=ci \
+            REDIS_PASSWORD=ci \
+            SEARCH_INDEX_TOKEN=ci \
+            PROFILE_ENCRYPTION_KEY=ci \
+            > "$RUNNER_TEMP/ci.env"
+
+          docker compose \
+            --env-file "$RUNNER_TEMP/ci.env" \
+            -f docker-compose.prod.yml \
+            config -q
+
+          echo "prod compose ok"
+
+      - name: Deploy script dry-run
+        run: |
+          bash -n scripts/deploy.sh
+          bash -n scripts/azure-provision.sh
+
+          scripts/deploy.sh \
+            --dry-run \
+            --env-file "$RUNNER_TEMP/ci.env" \
+            compose
+
+          AZURE_RESOURCE_GROUP=rg \
+          AZURE_VM_NAME=vm \
+          AZURE_SSH_KEY=/dev/null \
+          scripts/deploy.sh \
+            --dry-run \
+            --env-file "$RUNNER_TEMP/ci.env" \
+            azure up
+
+          scripts/azure-provision.sh --dry-run
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Terraform fmt + validate
+        run: |
+          terraform -chdir=terraform fmt -check -recursive
+          terraform -chdir=terraform init -backend=false -input=false
+          terraform -chdir=terraform validate

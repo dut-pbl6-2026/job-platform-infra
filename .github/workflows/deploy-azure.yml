@@ -1,0 +1,119 @@
+name: deploy-azure
+# Manual deploy/start/stop of the Azure test VM (student credit). Uses scripts/deploy.sh azure <action>.
+# Auth: OIDC (azure/login) when AZURE_CLIENT_ID/TENANT_ID/SUBSCRIPTION_ID secrets exist; otherwise SSH-only fallback
+# (VM must already be running; needs AZURE_VM_HOST) - see README "Deploy on Azure".
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "up | down | status | rollback"
+        type: choice
+        options: [up, down, status, rollback]
+        default: up
+      image_tag:
+        description: "Image tag/sha (required for rollback)"
+        type: string
+        default: latest
+      auto_deallocate_after_hours:
+        description: "up only: deallocate automatically in N hours (1-23) via Azure auto-shutdown; 0 = keep nightly default"
+        type: string
+        default: "0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-azure
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_VM_NAME: ${{ vars.AZURE_VM_NAME }}
+      AZURE_VM_SSH_USER: ${{ vars.AZURE_VM_SSH_USER || 'azureuser' }}
+      AZURE_VM_HOST: ${{ vars.AZURE_VM_HOST }}
+      ACTION: ${{ inputs.action }}
+      IMAGE_TAG_IN: ${{ inputs.image_tag }}
+      HOURS: ${{ inputs.auto_deallocate_after_hours }}
+      HAS_OIDC: ${{ secrets.AZURE_CLIENT_ID != '' && secrets.AZURE_TENANT_ID != '' && secrets.AZURE_SUBSCRIPTION_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          case "$IMAGE_TAG_IN" in ''|*[!A-Za-z0-9._-]*) echo "::error::invalid image_tag"; exit 1 ;; esac
+          case "$HOURS" in ''|*[!0-9]*) echo "::error::auto_deallocate_after_hours must be an integer"; exit 1 ;; esac
+          [ "$HOURS" -le 23 ] || { echo "::error::auto_deallocate_after_hours must be 0-23"; exit 1; }
+          if [ "$ACTION" = rollback ] && [ "$IMAGE_TAG_IN" = latest ]; then echo "::error::rollback needs an explicit previous sha"; exit 1; fi
+          if [ "$HAS_OIDC" != true ] && [ "$ACTION" != up ] && [ "$ACTION" != rollback ]; then
+            echo "::error::'$ACTION' needs Azure OIDC (az); SSH fallback supports only up/rollback"; exit 1
+          fi
+
+      - name: Azure login (OIDC)
+        if: env.HAS_OIDC == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Prepare SSH key and prod env
+        env:
+          SSH_KEY: ${{ secrets.AZURE_SSH_PRIVATE_KEY }}
+          PROD_ENV: ${{ secrets.PROD_ENV_FILE }}
+        run: |
+          umask 077
+          mkdir -p "$RUNNER_TEMP/ssh" envs
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/ssh/id"
+          if [ -n "$PROD_ENV" ]; then printf '%s\n' "$PROD_ENV" > envs/.env.prod; fi
+          echo "AZURE_SSH_KEY=$RUNNER_TEMP/ssh/id" >> "$GITHUB_ENV"
+          if [ "$HAS_OIDC" != true ]; then echo "AZURE_SKIP_VM_POWER=1" >> "$GITHUB_ENV"; fi
+
+      - name: Run deploy.sh
+        run: |
+          args=()
+          case "$ACTION" in up|rollback) args+=(--tag "$IMAGE_TAG_IN") ;; esac
+          [ "$ACTION" != down ] || args+=(--compose-down)
+          scripts/deploy.sh "${args[@]}" azure "$ACTION"
+
+      - name: Smoke /health and /health/ready
+        if: env.ACTION == 'up' || env.ACTION == 'rollback'
+        env:
+          REQUIRE_READY: ${{ vars.REQUIRE_HEALTH_READY }}
+        run: |
+          host="${AZURE_VM_HOST:-}"
+          if [ -z "$host" ]; then
+            host="$(az vm show -d -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_VM_NAME" --query 'fqdns || publicIps' -o tsv)"
+          fi
+          port="${{ vars.GATEWAY_PORT || '5000' }}"
+          check() { # path tries
+            for i in $(seq 1 "$2"); do
+              curl -fsS -o /dev/null --max-time 10 "http://$host:$port$1" && { echo "ok: $1"; return 0; }
+              sleep 5
+            done
+            return 1
+          }
+          check /health 24
+          if ! check /health/ready 12; then
+            if [ "$REQUIRE_READY" = true ]; then echo "::error::/health/ready failed"; exit 1; fi
+            echo "::warning::/health/ready not available or failing (set repo var REQUIRE_HEALTH_READY=true to enforce)"
+          fi
+
+      - name: Schedule auto-deallocate
+        if: (env.ACTION == 'up' || env.ACTION == 'rollback') && env.HOURS != '0' && env.HAS_OIDC == 'true'
+        run: |
+          t="$(date -u -d "+${HOURS} hours" +%H%M)"
+          az vm auto-shutdown -g "$AZURE_RESOURCE_GROUP" -n "$AZURE_VM_NAME" --time "$t" -o none
+          echo "VM will be deallocated daily at ${t} UTC (next in ~${HOURS}h). Terraform apply resets it to the default." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Reminder
+        if: always() && (env.ACTION == 'up' || env.ACTION == 'rollback')
+        run: |
+          echo "Reminder: run this workflow with action=down when finished (a running VM burns student credit)." >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,124 @@
+name: terraform
+# PR touching terraform/**: fmt + validate (no cloud creds). Plan only when Azure OIDC + remote state are configured.
+# apply: manual only (workflow_dispatch action=apply) behind the `production` environment (required reviewers).
+on:
+  pull_request:
+    paths: ["terraform/**", ".github/workflows/terraform.yml"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "plan or apply"
+        type: choice
+        options: [plan, apply]
+        default: plan
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  plan:
+    needs: validate
+    if: github.event_name == 'pull_request' || inputs.action == 'plan'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_ssh_public_key: ${{ vars.TF_SSH_PUBLIC_KEY }}
+      TF_VAR_admin_cidr: ${{ vars.TF_ADMIN_CIDR }}
+      TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+      TFSTATE_RESOURCE_GROUP: ${{ vars.TFSTATE_RESOURCE_GROUP }}
+      TFSTATE_CONTAINER: ${{ vars.TFSTATE_CONTAINER }}
+      TFSTATE_KEY: ${{ vars.TFSTATE_KEY }}
+    steps:
+      - name: Check configuration
+        id: cfg
+        run: |
+          if [ -n "$ARM_CLIENT_ID" ] && [ -n "$ARM_TENANT_ID" ] && [ -n "$ARM_SUBSCRIPTION_ID" ] \
+             && [ -n "$TFSTATE_STORAGE_ACCOUNT" ] && [ -n "$TF_VAR_ssh_public_key" ] && [ -n "$TF_VAR_admin_cidr" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Azure OIDC / remote state not configured - skipping terraform plan (validate still ran)."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.ready == 'true'
+      - uses: hashicorp/setup-terraform@v3
+        if: steps.cfg.outputs.ready == 'true'
+        with:
+          terraform_version: 1.9.8
+      - name: Plan
+        if: steps.cfg.outputs.ready == 'true'
+        working-directory: terraform
+        run: |
+          printf 'terraform {\n  backend "azurerm" {}\n}\n' > backend_override.tf
+          terraform init -input=false \
+            -backend-config="resource_group_name=$TFSTATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TFSTATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=${TFSTATE_CONTAINER:-tfstate}" \
+            -backend-config="key=${TFSTATE_KEY:-sub1.tfstate}"
+          terraform plan -input=false -lock-timeout=60s -out=tfplan
+
+  apply:
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
+    runs-on: ubuntu-latest
+    environment: production # configure required reviewers on this environment
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_ssh_public_key: ${{ vars.TF_SSH_PUBLIC_KEY }}
+      TF_VAR_admin_cidr: ${{ vars.TF_ADMIN_CIDR }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - name: Apply
+        working-directory: terraform
+        env:
+          TFSTATE_STORAGE_ACCOUNT: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+          TFSTATE_RESOURCE_GROUP: ${{ vars.TFSTATE_RESOURCE_GROUP }}
+          TFSTATE_CONTAINER: ${{ vars.TFSTATE_CONTAINER }}
+          TFSTATE_KEY: ${{ vars.TFSTATE_KEY }}
+        run: |
+          : "${ARM_CLIENT_ID:?AZURE_CLIENT_ID secret missing}"
+          : "${TFSTATE_STORAGE_ACCOUNT:?TFSTATE_STORAGE_ACCOUNT variable missing (remote state is required for CI apply)}"
+          printf 'terraform {\n  backend "azurerm" {}\n}\n' > backend_override.tf
+          terraform init -input=false \
+            -backend-config="resource_group_name=$TFSTATE_RESOURCE_GROUP" \
+            -backend-config="storage_account_name=$TFSTATE_STORAGE_ACCOUNT" \
+            -backend-config="container_name=${TFSTATE_CONTAINER:-tfstate}" \
+            -backend-config="key=${TFSTATE_KEY:-sub1.tfstate}"
+          terraform apply -input=false -auto-approve -lock-timeout=60s

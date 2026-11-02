@@ -1,0 +1,288 @@
+# job-platform-infra/docker-compose.prod.yml — single-host prod stack from GHCR images, see README.md#production-deploy
+# Usage: docker compose --env-file envs/.env.prod -f docker-compose.prod.yml up -d   (or scripts/deploy.sh compose)
+name: job-platform-prod
+
+x-dotnet-env: &dotnet-env
+  ASPNETCORE_ENVIRONMENT: Production
+  DOTNET_ENVIRONMENT: Production
+  LOG_LEVEL: ${LOG_LEVEL:-Warning}
+  JWT_ISSUER: ${JWT_ISSUER:-job-platform}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-job-platform}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+  CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
+  KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+  KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-job-platform}
+  KAFKA_TOPIC_JOB_EVENTS: ${KAFKA_TOPIC_JOB_EVENTS:-job-events}
+  KAFKA_TOPIC_APPLICATION_EVENTS: ${KAFKA_TOPIC_APPLICATION_EVENTS:-application-events}
+  REDIS_URL: redis:6379,password=${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+  ELASTICSEARCH_URL: http://elasticsearch:9200
+
+# .NET runtime images ship without curl/wget (profile-svc) → probe via bash /dev/tcp, same for all services.
+x-dotnet-health: &dotnet-health
+  interval: 15s
+  timeout: 5s
+  retries: 6
+  start_period: 30s
+
+x-dotnet-svc: &dotnet-svc
+  restart: unless-stopped
+  networks: [backend]
+  logging: &logging
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-job_platform}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy: { resources: { limits: { cpus: "1.0", memory: 1g } } }
+    logging: *logging
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    deploy: { resources: { limits: { cpus: "0.5", memory: 256m } } }
+    logging: *logging
+    networks: [backend]
+
+  elasticsearch:
+    # Custom image (analysis-icu for vietnamese_icu analyzer) is not published to GHCR: built locally from docker/es.
+    build:
+      context: ./docker/es
+    image: job-platform-elasticsearch:8.13.2-icu
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"   # reachable only on the internal network
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      cluster.name: job-platform
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy: { resources: { limits: { cpus: "1.0", memory: 1536m } } }
+    logging: *logging
+    networks: [backend]
+
+  kafka:
+    image: apache/kafka:3.7.0
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-job-platform-kraft-cluster}
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    deploy: { resources: { limits: { cpus: "1.0", memory: 768m } } }
+    logging: *logging
+    networks: [backend]
+
+  auth:
+    <<: *dotnet-svc
+    image: ${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-auth-svc:${AUTH_TAG:-${IMAGE_TAG:-latest}}
+    environment:
+      <<: *dotnet-env
+      ASPNETCORE_URLS: http://+:5001
+      DATABASE_URL_AUTH: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      ConnectionStrings__AuthDb: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      <<: *dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5001 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
+
+  job:
+    <<: *dotnet-svc
+    image: ${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-job-svc:${JOB_TAG:-${IMAGE_TAG:-latest}}
+    environment:
+      <<: *dotnet-env
+      ASPNETCORE_URLS: http://+:5002
+      DATABASE_URL_JOB: Host=postgres;Port=5432;Database=job_platform_job;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      SEARCH_SYNC_URL: http://search:5003
+      SEARCH_INDEX_TOKEN: ${SEARCH_INDEX_TOKEN:?SEARCH_INDEX_TOKEN is required}
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      <<: *dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5002 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
+
+  search:
+    <<: *dotnet-svc
+    image: ${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-search-svc:${SEARCH_TAG:-${IMAGE_TAG:-latest}}
+    environment:
+      <<: *dotnet-env
+      ASPNETCORE_URLS: http://+:5003
+      SEARCH_ES_URL: http://elasticsearch:9200
+      SEARCH_REDIS_URL: redis:6379,password=${REDIS_PASSWORD}
+      ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-jobs}
+      SEARCH_INDEX_TOKEN: ${SEARCH_INDEX_TOKEN:?SEARCH_INDEX_TOKEN is required}
+      JOB_SERVICE_URL: http://job:5002
+    depends_on:
+      elasticsearch: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      <<: *dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5003 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
+
+  app:
+    <<: *dotnet-svc
+    image: ${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-app-svc:${APP_TAG:-${IMAGE_TAG:-latest}}
+    environment:
+      <<: *dotnet-env
+      ASPNETCORE_URLS: http://+:5004
+      DATABASE_URL_APP: Host=postgres;Port=5432;Database=job_platform_app;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      JOB_SERVICE_URL: http://job:5002
+      COMPANY_SERVICE_URL: http://job:5002
+      APP_CV_STORAGE_PATH: /data/cv
+    volumes:
+      - cv_data:/data/cv
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      <<: *dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5004 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
+
+  profile:
+    <<: *dotnet-svc
+    image: ${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-profile-svc:${PROFILE_TAG:-${IMAGE_TAG:-latest}}
+    environment:
+      <<: *dotnet-env
+      ASPNETCORE_URLS: http://+:5005
+      DATABASE_URL_PROFILE: Host=postgres;Port=5432;Database=job_platform_profile;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PROFILE_ENCRYPTION_KEY: ${PROFILE_ENCRYPTION_KEY:?PROFILE_ENCRYPTION_KEY is required}
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      <<: *dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5005 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
+
+  notif:
+    <<: *dotnet-svc
+    image: ${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-notif-svc:${NOTIF_TAG:-${IMAGE_TAG:-latest}}
+    environment:
+      <<: *dotnet-env
+      ASPNETCORE_URLS: http://+:5006
+      DATABASE_URL_NOTIF: Host=postgres;Port=5432;Database=job_platform_notif;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@job-platform.local}
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+    healthcheck:
+      <<: *dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5006 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
+
+  gateway:
+    <<: *dotnet-svc
+    image: ${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-gateway:${GATEWAY_TAG:-${IMAGE_TAG:-latest}}
+    environment:
+      <<: *dotnet-env
+      ASPNETCORE_URLS: http://+:5000
+      GATEWAY_UPSTREAM_AUTH: http://auth:5001
+      GATEWAY_UPSTREAM_JOB: http://job:5002
+      GATEWAY_UPSTREAM_SEARCH: http://search:5003
+      GATEWAY_UPSTREAM_APP: http://app:5004
+      GATEWAY_UPSTREAM_PROFILE: http://profile:5005
+      GATEWAY_UPSTREAM_NOTIF: http://notif:5006
+    ports:
+      - "${GATEWAY_BIND:-0.0.0.0}:${GATEWAY_PORT:-5000}:5000"
+    depends_on:
+      auth: { condition: service_healthy }
+      job: { condition: service_healthy }
+      search: { condition: service_healthy }
+      app: { condition: service_healthy }
+      profile: { condition: service_healthy }
+      notif: { condition: service_healthy }
+    healthcheck:
+      <<: *dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5000 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
+
+  web:
+    image: ${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-web:${WEB_TAG:-${IMAGE_TAG:-latest}}
+    restart: unless-stopped
+    ports:
+      - "${WEB_BIND:-0.0.0.0}:${WEB_PORT:-80}:80"
+    depends_on:
+      gateway: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy: { resources: { limits: { cpus: "0.25", memory: 128m } } }
+    security_opt: ["no-new-privileges:true"]
+    logging: *logging
+    networks: [backend]
+
+volumes:
+  pg_data:
+  redis_data:
+  es_data:
+  kafka_data:
+  cv_data:
+
+networks:
+  backend:
+    driver: bridge

@@ -1,11 +1,11 @@
 # Uptime Monitoring — Free (UptimeRobot 50 monitors, Grafana Cloud 10k metrics)
 
-> Prod `jp-* onrender.com` Free sleeps 15m → cold start 1m. CI smoke `curl` weak. Use free external ping.
+> Prod Azure VM is deallocated outside test sessions (monitors will alert while it is down; pause them). CI smoke `curl` weak. Use free external ping.
 
 ## UptimeRobot free (recommended)
-- Create account app.uptimerobot.com → Add `HTTP(s)` monitor `https://jp-auth.onrender.com/health` interval `5m` → same for `jp-gateway /health`, `jp-job /health`, `jp-gateway/health/auth` via YARP.
+- Create account app.uptimerobot.com → Add `HTTP(s)` monitor `https://<vm-fqdn>:5000/health` interval `5m` → same for `jp-gateway /health`, `jp-job /health`, `jp-gateway/health/auth` via YARP.
 - Alert via email/Slack free. 50 monitors covers 7 svc + gateway aggregated `GET /health`.
-- Render Free 750h + Vercel 100GB already free; UptimeRobot free adds reliable `p95<500ms` check without paid Grafana.
+- Vercel 100GB already free; UptimeRobot free adds reliable `p95<500ms` check without paid Grafana.
 
 ## Grafana Cloud free (alternative)
 - `GRAFANA_CLOUD_URL=__SET_VIA_INFISICAL__` `PROMETHEUS_URL=http://localhost:9090` (`envs/.env.prod.example`).
@@ -16,4 +16,4 @@
 - Not required for PBL6-16, enable after `profile/notif` scaffold.
 
 ## Smoke fallback
-- CI `curl -sf https://jp-*.onrender.com/health` `sleep 60` handles cold start (see `auth ci.yml:88`).
+- CI `curl -sf http://<vm-fqdn>:5000/health` retries (deploy.sh smoke) (see `auth ci.yml:88`).

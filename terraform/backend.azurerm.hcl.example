@@ -1,0 +1,11 @@
+# Optional remote state in an Azure Storage account (create it once, e.g. in the first subscription):
+#   az group create -n rg-tfstate -l southeastasia
+#   az storage account create -n <globallyuniquename> -g rg-tfstate -l southeastasia --sku Standard_LRS
+#   az storage container create --account-name <globallyuniquename> -n tfstate --auth-mode login
+# Uncomment `backend "azurerm" {}` in versions.tf, then one state key per subscription:
+#   terraform init -reconfigure -backend-config=backend.azurerm.hcl -backend-config="key=sub1.tfstate"
+# Auth via `az login` / OIDC (use_azuread_auth); no access keys in files.
+resource_group_name  = "rg-tfstate"
+storage_account_name = "REPLACE_ME"
+container_name       = "tfstate"
+use_azuread_auth     = true
