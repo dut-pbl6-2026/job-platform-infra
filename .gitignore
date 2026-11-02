@@ -8,3 +8,14 @@ mise.toml.local
 INFISICAL_TOKEN
 envs/.env.dev
 envs/.env.prod
+
+# terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfstate.d/
+crash.log
+*.tfvars
+!*.tfvars.example
+backend.azurerm.hcl
+tfplan

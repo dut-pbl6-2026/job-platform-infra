@@ -1,0 +1,9 @@
+# Copy to envs/sub1.tfvars (gitignored) — one file per Azure for Students subscription (sub1).
+# Use workspace "sub1": terraform workspace select -or-create sub1
+subscription_id = "00000000-0000-0000-0000-000000000000" # az account show --query id -o tsv
+ssh_public_key  = "ssh-ed25519 AAAA... you@host"
+admin_cidr      = "203.0.113.7/32" # your public IP
+prefix          = "jobplatformsub1"
+# location       = "southeastasia"  # change if the subscription is restricted
+# vm_size        = "Standard_B2ms"
+# dns_label      = "jobplatform-sub1-yourname"
