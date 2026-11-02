@@ -94,9 +94,11 @@ jobs:
           fi
           port="${{ vars.GATEWAY_PORT || '5000' }}"
           check() { # path tries
-            for i in $(seq 1 "$2"); do
+            tries="$2"
+            while [ "$tries" -gt 0 ]; do
               curl -fsS -o /dev/null --max-time 10 "http://$host:$port$1" && { echo "ok: $1"; return 0; }
               sleep 5
+              tries=$((tries - 1))
             done
             return 1
           }
