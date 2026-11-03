@@ -33,7 +33,10 @@ Env: `envs/.env.dev.example` → `envs/.env.dev` → `../job-platform-*/.env` �
 ## Docker Compose
 
 ```bash
-docker compose up -d && docker compose ps   # postgres 5432, redis 6379, es 9200, kafka 9092, mailhog 1025/8025, kafka-ui 8080
+docker compose up -d && docker compose ps   # default hybrid mode (infra + auth + gateway + web)
+
+# All-in-one full stack (builds & runs all 6 microservices + gateway + web in Docker):
+# docker compose -f docker-compose.full.yml up -d
 docker compose config -q                      # lint
 ```
 

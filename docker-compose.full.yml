@@ -1,0 +1,436 @@
+# job-platform-infra/docker-compose.full.yml
+# All-in-one local development stack: builds all microservices from local source.
+# Usage:
+#   docker compose -f docker-compose.full.yml up -d
+#   docker compose -f docker-compose.full.yml down
+name: job-platform-full
+
+services:
+  # ─── Infrastructure Layer ──────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: job-platform-postgres
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123456}
+      POSTGRES_DB: ${POSTGRES_DB:-job_platform}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-job_platform}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks: [job-platform]
+
+  redis:
+    image: redis:7-alpine
+    container_name: job-platform-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [job-platform]
+
+  elasticsearch:
+    build:
+      context: ./docker/es
+    image: job-platform-elasticsearch:8.13.2-icu
+    container_name: job-platform-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - cluster.name=job-platform
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [job-platform]
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: job-platform-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    env_file:
+      - envs/.env.dev
+    environment:
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - CLUSTER_ID=job-platform-kraft-cluster
+      - KAFKA_LISTENERS=PLAINTEXT://:9092,INTERNAL://:29092,CONTROLLER://:9093
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [job-platform]
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: job-platform-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:29092
+    networks: [job-platform]
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: job-platform-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks: [job-platform]
+
+  # ─── Microservices Layer (Local Source Build) ──────────────────────────────
+  auth:
+    build:
+      context: ../job-platform-auth-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-auth
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5001
+      DATABASE_URL_AUTH: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
+      ConnectionStrings__AuthDb: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:5000,http://localhost:8080
+    ports:
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5001/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks: [job-platform]
+
+  job:
+    build:
+      context: ../job-platform-job-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-job-svc
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5002
+      DATABASE_URL_JOB: Host=postgres;Port=5432;Database=job_platform_job;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
+      ConnectionStrings__JobDb: Host=postgres;Port=5432;Database=job_platform_job;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC_JOB_EVENTS: job-events
+      SEARCH_SYNC_URL: http://search:5003/api/search/sync
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:5000
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5002/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks: [job-platform]
+
+  search:
+    build:
+      context: ../job-platform-search-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-search-svc
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5003
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      REDIS_CONNECTION_STRING: redis:6379
+      REDIS_URL: redis:6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC_JOB_EVENTS: job-events
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:5000
+    ports:
+      - "5003:5003"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5003/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks: [job-platform]
+
+  app:
+    build:
+      context: ../job-platform-app-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-app-svc
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5004
+      DATABASE_URL_APP: Host=postgres;Port=5432;Database=job_platform_app;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
+      ConnectionStrings__AppDb: Host=postgres;Port=5432;Database=job_platform_app;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC_APPLICATION_EVENTS: application-events
+      JOB_SERVICE_URL: http://job:5002
+      COMPANY_SERVICE_URL: http://job:5002
+      APP_CV_STORAGE_PATH: /data/cv
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:5000
+    volumes:
+      - cv_data:/data/cv
+    ports:
+      - "5004:5004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5004/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks: [job-platform]
+
+  profile:
+    build:
+      context: ../job-platform-profile-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-profile-svc
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5005
+      ASPNETCORE_HTTP_PORTS: 5005
+      DATABASE_URL_PROFILE: Host=postgres;Port=5432;Database=job_platform_profile;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
+      ConnectionStrings__ProfileDb: Host=postgres;Port=5432;Database=job_platform_profile;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
+      PROFILE_ENCRYPTION_KEY: ${PROFILE_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:5000
+    ports:
+      - "5005:5005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5005/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks: [job-platform]
+
+  notif:
+    build:
+      context: ../job-platform-notif-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-notif-svc
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5006
+      ASPNETCORE_HTTP_PORTS: 5006
+      DATABASE_URL_NOTIF: Host=postgres;Port=5432;Database=job_platform_notif;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
+      ConnectionStrings__NotifDb: Host=postgres;Port=5432;Database=job_platform_notif;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC_APPLICATION_EVENTS: application-events
+      KAFKA_TOPIC_JOB_EVENTS: job-events
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_FROM: noreply@job-platform.local
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:5000
+    ports:
+      - "5006:5006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5006/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    networks: [job-platform]
+
+  # ─── API Gateway ───────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: ../job-platform-gateway
+      dockerfile: Dockerfile
+    container_name: job-platform-gateway
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5000
+      # In full docker stack, gateway routes directly to container service names:
+      GATEWAY_UPSTREAM_AUTH: http://auth:5001
+      GATEWAY_UPSTREAM_JOB: http://job:5002
+      GATEWAY_UPSTREAM_SEARCH: http://search:5003
+      GATEWAY_UPSTREAM_APP: http://app:5004
+      GATEWAY_UPSTREAM_PROFILE: http://profile:5005
+      GATEWAY_UPSTREAM_NOTIF: http://notif:5006
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000,https://job-platform-web.vercel.app
+    ports:
+      - "5000:5000"
+    depends_on:
+      auth:
+        condition: service_healthy
+      job:
+        condition: service_healthy
+      search:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+      profile:
+        condition: service_healthy
+      notif:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks: [job-platform]
+
+  # ─── Frontend Web App ──────────────────────────────────────────────────────
+  web:
+    build:
+      context: ../job-platform-web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://localhost:5000
+        VITE_API_BASE_URL: http://localhost:5000/api
+    container_name: job-platform-web
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks: [job-platform]
+
+  # ─── Monitoring Stack ──────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: job-platform-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [job-platform]
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    container_name: job-platform-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks: [job-platform]
+
+volumes:
+  pg_data:
+  redis_data:
+  es_data:
+  kafka_data:
+  cv_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  job-platform:
+    driver: bridge
