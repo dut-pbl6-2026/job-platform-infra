@@ -168,7 +168,8 @@ services:
       ConnectionStrings__JobDb: Host=postgres;Port=5432;Database=job_platform_job;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-123456}
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       KAFKA_TOPIC_JOB_EVENTS: job-events
-      SEARCH_SYNC_URL: http://search:5003/api/search/sync
+      # Base URL only — job-svc appends /api/search/index itself (SearchSyncPublisher).
+      SEARCH_SYNC_URL: http://search:5003
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:5000
     ports:
       - "5002:5002"
@@ -434,3 +435,4 @@ volumes:
 networks:
   job-platform:
     driver: bridge
+
