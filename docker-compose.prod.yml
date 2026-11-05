@@ -9,6 +9,14 @@ x-dotnet-env: &dotnet-env
   JWT_ISSUER: ${JWT_ISSUER:-job-platform}
   JWT_AUDIENCE: ${JWT_AUDIENCE:-job-platform}
   JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+  # auth-svc, gateway, job-svc and app-svc bind the "Jwt" section (Jwt:Secret...), which .NET reads
+  # from Jwt__* env vars, not JWT_*. Without these, auth-svc and the gateway fell back to the dev
+  # secret committed in their appsettings.json (anyone could sign an Admin token), and job-svc /
+  # app-svc failed their fail-fast check. profile-svc reads JWT_SECRET directly: keep both.
+  Jwt__Secret: ${JWT_SECRET:?JWT_SECRET is required}
+  Jwt__Issuer: ${JWT_ISSUER:-job-platform}
+  Jwt__Audience: ${JWT_AUDIENCE:-job-platform}
+  Jwt__ExpiresMinutes: ${JWT_EXPIRES_MINUTES:-60}
   CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
   KAFKA_BOOTSTRAP_SERVERS: kafka:29092
   KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-job-platform}
