@@ -173,6 +173,8 @@ services:
       GATEWAY_UPSTREAM_APP: http://host.docker.internal:5004
       GATEWAY_UPSTREAM_PROFILE: http://host.docker.internal:5005
       GATEWAY_UPSTREAM_NOTIF: http://host.docker.internal:5006
+      # ai-svc: `mise run dev` in job-platform-ai-svc (port 6000)
+      GATEWAY_UPSTREAM_AI: http://host.docker.internal:6000
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000,https://job-platform-web.vercel.app
     extra_hosts:
       - "host.docker.internal:host-gateway"
