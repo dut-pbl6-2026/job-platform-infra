@@ -19,3 +19,6 @@ crash.log
 !*.tfvars.example
 backend.azurerm.hcl
 tfplan
+
+# service sources cloned by scripts/fetch-sources.* (docker build contexts)
+.build/

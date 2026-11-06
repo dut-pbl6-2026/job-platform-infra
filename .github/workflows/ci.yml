@@ -90,6 +90,7 @@ jobs:
             REDIS_PASSWORD=ci \
             SEARCH_INDEX_TOKEN=ci \
             PROFILE_ENCRYPTION_KEY=ci \
+            INTERNAL_SERVICE_TOKEN=ci \
             > "$RUNNER_TEMP/ci.env"
 
           docker compose \

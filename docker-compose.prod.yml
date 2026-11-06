@@ -25,7 +25,8 @@ x-dotnet-env: &dotnet-env
   REDIS_URL: redis:6379,password=${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   ELASTICSEARCH_URL: http://elasticsearch:9200
 
-# .NET runtime images ship without curl/wget (profile-svc) → probe via bash /dev/tcp, same for all services.
+# .NET runtime images ship without curl/wget (profile-svc) → probe /health over /dev/tcp, same for all services.
+# /dev/tcp is a bash feature and CMD-SHELL runs /bin/sh (dash in these Debian images): call bash explicitly.
 x-dotnet-health: &dotnet-health
   interval: 15s
   timeout: 5s
@@ -141,11 +142,18 @@ services:
       ASPNETCORE_URLS: http://+:5001
       DATABASE_URL_AUTH: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       ConnectionStrings__AuthDb: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}
+      # Recruiter registration checks the companyId against job-svc; /api/admin/stats reads
+      # job-svc and app-svc /api/internal/stats. auth-svc refuses to start in Production without
+      # both internal tokens, and job/app reject the call unless INTERNAL_SERVICE_TOKEN matches.
+      JOB_SERVICE_URL: http://job:5002
+      APP_SERVICE_URL: http://app:5004
+      JOB_SERVICE_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is required}
+      APP_SERVICE_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is required}
     depends_on:
       postgres: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5001 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5001 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   job:
@@ -157,12 +165,13 @@ services:
       DATABASE_URL_JOB: Host=postgres;Port=5432;Database=job_platform_job;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       SEARCH_SYNC_URL: http://search:5003
       SEARCH_INDEX_TOKEN: ${SEARCH_INDEX_TOKEN:?SEARCH_INDEX_TOKEN is required}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is required}
     depends_on:
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5002 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5002 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   search:
@@ -182,7 +191,7 @@ services:
       kafka: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5003 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5003 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   app:
@@ -195,6 +204,7 @@ services:
       JOB_SERVICE_URL: http://job:5002
       COMPANY_SERVICE_URL: http://job:5002
       APP_CV_STORAGE_PATH: /data/cv
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is required}
     volumes:
       - cv_data:/data/cv
     depends_on:
@@ -202,7 +212,7 @@ services:
       kafka: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5004 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5004 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   profile:
@@ -217,7 +227,7 @@ services:
       postgres: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5005 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5005 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   notif:
@@ -237,7 +247,7 @@ services:
       kafka: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5006 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5006 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   # ai-svc (Python, local ONNX model + OCR): resume scoring behind /api/ai/*. Checks the auth-svc JWT
@@ -279,7 +289,7 @@ services:
       notif: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5000 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5000 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   web:
