@@ -1,6 +1,29 @@
 # job-platform-infra/docker-compose.yml — see README.md
 name: job-platform
 
+# Shared by the .NET services built from source below. They run inside the compose network, so
+# Kafka/Redis/ES are reached by service name (envs/.env.dev points at localhost for host-run
+# services). One JWT secret for every service: auth-svc, the gateway, job-svc and app-svc bind the
+# Jwt section (Jwt__* env vars); profile-svc and ai-svc read JWT_SECRET.
+x-dev-dotnet-env: &dev-dotnet-env
+  ASPNETCORE_ENVIRONMENT: Development
+  JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me-32chars-min}
+  JWT_ISSUER: ${JWT_ISSUER:-job-platform}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-job-platform}
+  Jwt__Secret: ${JWT_SECRET:-dev-jwt-secret-change-me-32chars-min}
+  Jwt__Issuer: ${JWT_ISSUER:-job-platform}
+  Jwt__Audience: ${JWT_AUDIENCE:-job-platform}
+  KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+  REDIS_URL: redis:6379
+  ELASTICSEARCH_URL: http://elasticsearch:9200
+
+# .NET runtime images may lack curl (profile-svc): probe /health over bash /dev/tcp.
+x-dev-dotnet-health: &dev-dotnet-health
+  interval: 10s
+  timeout: 5s
+  retries: 12
+  start_period: 30s
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -135,7 +158,7 @@ services:
     env_file:
       - envs/.env.dev
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
+      <<: *dev-dotnet-env
       ASPNETCORE_URLS: http://+:5001
       # Override Host for Docker bridge DNS (workaround: localhost outside compose)
       DATABASE_URL_AUTH: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
@@ -154,6 +177,163 @@ services:
       start_period: 15s
     networks: [job-platform]
 
+  # job-svc reads ConnectionStrings:JobDb before DATABASE_URL_JOB: set both.
+  job:
+    build:
+      context: ../job-platform-job-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-job
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      <<: *dev-dotnet-env
+      ASPNETCORE_URLS: http://+:5002
+      DATABASE_URL_JOB: Host=postgres;Port=5432;Database=job_platform_job;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      ConnectionStrings__JobDb: Host=postgres;Port=5432;Database=job_platform_job;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      SEARCH_SYNC_URL: http://search:5003
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      <<: *dev-dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5002 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    networks: [job-platform]
+
+  # No SEARCH_INDEX_TOKEN: POST /api/search/index stays open (local dev only, warned at startup).
+  search:
+    build:
+      context: ../job-platform-search-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-search
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      <<: *dev-dotnet-env
+      ASPNETCORE_URLS: http://+:5003
+      SEARCH_ES_URL: http://elasticsearch:9200
+      SEARCH_REDIS_URL: redis:6379
+      ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-jobs}
+      JOB_SERVICE_URL: http://job:5002
+    ports:
+      - "5003:5003"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      <<: *dev-dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5003 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    networks: [job-platform]
+
+  app:
+    build:
+      context: ../job-platform-app-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-app
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      <<: *dev-dotnet-env
+      ASPNETCORE_URLS: http://+:5004
+      DATABASE_URL_APP: Host=postgres;Port=5432;Database=job_platform_app;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      ConnectionStrings__AppDb: Host=postgres;Port=5432;Database=job_platform_app;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      JOB_SERVICE_URL: http://job:5002
+      COMPANY_SERVICE_URL: http://job:5002
+      APP_CV_STORAGE_PATH: /data/cv
+    volumes:
+      - cv_data:/data/cv
+    ports:
+      - "5004:5004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      <<: *dev-dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5004 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    networks: [job-platform]
+
+  # No PROFILE_ENCRYPTION_KEY: Development uses profile-svc's insecure dev key (logged as a warning).
+  profile:
+    build:
+      context: ../job-platform-profile-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-profile
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      <<: *dev-dotnet-env
+      ASPNETCORE_URLS: http://+:5005
+      DATABASE_URL_PROFILE: Host=postgres;Port=5432;Database=job_platform_profile;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      ConnectionStrings__ProfileDb: Host=postgres;Port=5432;Database=job_platform_profile;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5005:5005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *dev-dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5005 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    networks: [job-platform]
+
+  # Mail goes to MailHog: http://localhost:8025
+  notif:
+    build:
+      context: ../job-platform-notif-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-notif
+    restart: unless-stopped
+    env_file:
+      - envs/.env.dev
+    environment:
+      <<: *dev-dotnet-env
+      ASPNETCORE_URLS: http://+:5006
+      DATABASE_URL_NOTIF: Host=postgres;Port=5432;Database=job_platform_notif;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      ConnectionStrings__NotifDb: Host=postgres;Port=5432;Database=job_platform_notif;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+    ports:
+      - "5006:5006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      <<: *dev-dotnet-health
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5006 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+    networks: [job-platform]
+
+  # ai-svc (Python): resume scoring behind /api/ai/*. The image downloads its ONNX model at build time.
+  # It checks the auth-svc JWT itself (JWT_SECRET). Uses the image's own HEALTHCHECK (curl /health).
+  ai:
+    build:
+      context: ../job-platform-ai-svc
+      dockerfile: Dockerfile
+    container_name: job-platform-ai
+    restart: unless-stopped
+    environment:
+      PORT: "6000"
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me-32chars-min}
+      JWT_ISSUER: ${JWT_ISSUER:-job-platform}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-job-platform}
+      JOB_SERVICE_URL: http://job:5002
+    ports:
+      - "6000:6000"
+    networks: [job-platform]
+
   gateway:
     build:
       context: ../job-platform-gateway
@@ -163,18 +343,17 @@ services:
     env_file:
       - envs/.env.dev
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
+      <<: *dev-dotnet-env
       ASPNETCORE_URLS: http://+:5000
+      # Every service runs in this compose file. To debug one as a local `dotnet run` process instead,
+      # stop its container and point its upstream at http://host.docker.internal:<port>.
       GATEWAY_UPSTREAM_AUTH: http://auth:5001
-      # job/search/app/profile run as local `dotnet` processes (dev-up.sh --with-*),
-      # so the container reaches them via the host gateway.
-      GATEWAY_UPSTREAM_JOB: http://host.docker.internal:5002
-      GATEWAY_UPSTREAM_SEARCH: http://host.docker.internal:5003
-      GATEWAY_UPSTREAM_APP: http://host.docker.internal:5004
-      GATEWAY_UPSTREAM_PROFILE: http://host.docker.internal:5005
-      GATEWAY_UPSTREAM_NOTIF: http://host.docker.internal:5006
-      # ai-svc: `mise run dev` in job-platform-ai-svc (port 6000)
-      GATEWAY_UPSTREAM_AI: http://host.docker.internal:6000
+      GATEWAY_UPSTREAM_JOB: http://job:5002
+      GATEWAY_UPSTREAM_SEARCH: http://search:5003
+      GATEWAY_UPSTREAM_APP: http://app:5004
+      GATEWAY_UPSTREAM_PROFILE: http://profile:5005
+      GATEWAY_UPSTREAM_NOTIF: http://notif:5006
+      GATEWAY_UPSTREAM_AI: http://ai:6000
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000,https://job-platform-web.vercel.app
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -182,6 +361,16 @@ services:
       - "5000:5000"
     depends_on:
       auth:
+        condition: service_healthy
+      job:
+        condition: service_healthy
+      search:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+      profile:
+        condition: service_healthy
+      notif:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
@@ -255,6 +444,7 @@ volumes:
   kafka_data:
   prometheus_data:
   grafana_data:
+  cv_data:
 
 networks:
   job-platform:
