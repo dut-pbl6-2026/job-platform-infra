@@ -86,7 +86,9 @@ services:
     volumes:
       - es_data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
+      # Quote the URL: an unquoted & backgrounds curl and the check always passed, so services
+      # waiting on ES started before it listened (search-svc then never created its index mapping).
+      test: ["CMD-SHELL", "curl -sf 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
