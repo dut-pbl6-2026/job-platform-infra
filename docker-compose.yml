@@ -172,6 +172,12 @@ services:
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:8080
       # Registering a Recruiter checks the companyId against job-svc (default localhost:5002).
       JOB_SERVICE_URL: http://job:5002
+      # GET /api/admin/stats aggregates job-svc and app-svc /api/internal/stats with a shared token
+      # (they check INTERNAL_SERVICE_TOKEN). Without it the dashboard waited ~7 s and showed no job
+      # or application numbers.
+      APP_SERVICE_URL: http://app:5004
+      JOB_SERVICE_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-service-token}
+      APP_SERVICE_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-service-token}
     ports:
       - "5001:5001"
     depends_on:
@@ -202,6 +208,7 @@ services:
       SEARCH_SYNC_URL: http://search:5003
       # New recruiter jobs start as Pending and need admin approval (off by default in job-svc).
       FEATURE_ADMIN_APPROVAL: "true"
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-service-token}
     ports:
       - "5002:5002"
     depends_on:
@@ -264,6 +271,7 @@ services:
       # The gateway strips client-sent copies and sets them from the verified JWT. Port 5004 is
       # published for Swagger, so a local caller can spoof the header there: dev only.
       ENABLE_DEV_AUTH: "true"
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-service-token}
     volumes:
       - cv_data:/data/cv
     ports:

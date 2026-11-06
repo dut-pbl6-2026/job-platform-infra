@@ -142,6 +142,13 @@ services:
       ASPNETCORE_URLS: http://+:5001
       DATABASE_URL_AUTH: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       ConnectionStrings__AuthDb: Host=postgres;Port=5432;Database=job_platform_auth;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}
+      # Recruiter registration checks the companyId against job-svc; /api/admin/stats reads
+      # job-svc and app-svc /api/internal/stats. auth-svc refuses to start in Production without
+      # both internal tokens, and job/app reject the call unless INTERNAL_SERVICE_TOKEN matches.
+      JOB_SERVICE_URL: http://job:5002
+      APP_SERVICE_URL: http://app:5004
+      JOB_SERVICE_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is required}
+      APP_SERVICE_INTERNAL_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is required}
     depends_on:
       postgres: { condition: service_healthy }
     healthcheck:
@@ -158,6 +165,7 @@ services:
       DATABASE_URL_JOB: Host=postgres;Port=5432;Database=job_platform_job;Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       SEARCH_SYNC_URL: http://search:5003
       SEARCH_INDEX_TOKEN: ${SEARCH_INDEX_TOKEN:?SEARCH_INDEX_TOKEN is required}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is required}
     depends_on:
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }
@@ -196,6 +204,7 @@ services:
       JOB_SERVICE_URL: http://job:5002
       COMPANY_SERVICE_URL: http://job:5002
       APP_CV_STORAGE_PATH: /data/cv
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is required}
     volumes:
       - cv_data:/data/cv
     depends_on:
