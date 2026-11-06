@@ -32,10 +32,37 @@ Env: `envs/.env.dev.example` → `envs/.env.dev` → `../job-platform-*/.env` �
 
 ## Docker Compose
 
+Images are built from `.build/src/` (gitignored), a copy of every service repo, **not** from your own working trees. That copy is not refreshed automatically, so after a service repo changes on `main`, fetch it before building or you will run the old code (for example the old web UI):
+
+```bash
+pwsh ./scripts/fetch-sources.ps1     # or: bash scripts/fetch-sources.sh. Hard-resets .build/src to main
+docker compose up -d --build         # rebuilds only images whose sources changed; never use -v here
+```
+
+`fetch-sources.ps1 -Ref <branch-or-tag>` checks out another ref in every repo. To build from your own working trees (local branches or uncommitted edits), skip the fetch and set `SERVICES_SRC=..` for both `build` and `up`.
+
 ```bash
 docker compose up -d && docker compose ps   # postgres 5432, redis 6379, es 9200, kafka 9092, mailhog 1025/8025, kafka-ui 8080
 docker compose config -q                      # lint
 ```
+
+### Seed demo data (dev only)
+
+A fresh stack has empty databases (no users, companies or jobs), so the web app shows no listings. Once `docker compose ps` reports every service healthy, seed it:
+
+```bash
+pwsh ./scripts/seed-dev.ps1     # PowerShell 7+; safe to re-run
+```
+
+The script creates 3 demo companies, 3 accounts and 8 jobs. The jobs go through the gateway like real ones (recruiter creates, admin approves, search-svc indexes them over Kafka); the last 2 stay `Pending` for testing approve/reject. Options: `-Gateway`, `-Password`, `-PendingJobs`, `-PostgresContainer`.
+
+| Role | Email | Password |
+|------|-------|----------|
+| Admin | `admin@jobplatform.local` | `Abc12345` |
+| Recruiter | `recruiter@jobplatform.local` | `Abc12345` |
+| User (candidate) | `user@jobplatform.local` | `Abc12345` |
+
+The data lives in the Postgres volume, so it survives `docker compose up`/`down` and is lost only after `docker compose down -v` (run the script again then). These accounts are for local development only; never seed a shared or prod environment.
 
 ## Monitoring Stack (Prometheus + Grafana)
 
@@ -47,9 +74,9 @@ The monitoring stack collects OpenTelemetry metrics from all 7 .NET backend serv
 |---------|-----|-------------|---------|
 | **Prometheus** | `http://localhost:9090` | _None_ | Metrics TSDB & scraper |
 | **Prometheus Targets** | `http://localhost:9090/targets` | _None_ | Scrape health inspection |
-| **Grafana** | `http://localhost:3001` | `admin` / `admin` | Dashboards & visualization |
+| **Grafana** | `http://localhost:4001` | `admin` / `admin` | Dashboards & visualization |
 
-> **Note:** Port `3001` is used for Grafana on the host (mapped to container port 3000) to avoid port collisions with the local React web frontend dev server. The `admin`/`admin` login is for **local development only** — set `GF_SECURITY_ADMIN_PASSWORD` before running this stack anywhere shared, and never expose Prometheus/Grafana publicly.
+> **Note:** Port `4001` is used for Grafana on the host (mapped to container port 3000) to avoid port collisions with the local React web frontend dev server. The `admin`/`admin` login is for **local development only** — set `GF_SECURITY_ADMIN_PASSWORD` before running this stack anywhere shared, and never expose Prometheus/Grafana publicly.
 
 ### Scrape targets
 
