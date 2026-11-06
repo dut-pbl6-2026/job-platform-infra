@@ -240,6 +240,21 @@ services:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5006 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
+  # ai-svc (Python, local ONNX model + OCR): resume scoring behind /api/ai/*. Checks the auth-svc JWT
+  # itself, so JWT_SECRET is required: without it ai-svc falls back to trusting X-User-Id (dev mode).
+  # Uses the image's own HEALTHCHECK (curl /health). Redis is optional; it keeps its cache in-process.
+  ai:
+    <<: *dotnet-svc
+    image: ${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-ai-svc:${AI_TAG:-${IMAGE_TAG:-latest}}
+    environment:
+      PORT: "6000"
+      LOG_LEVEL: ${LOG_LEVEL:-Warning}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ISSUER: ${JWT_ISSUER:-job-platform}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-job-platform}
+      JOB_SERVICE_URL: http://job:5002  # looked up per request (cached), so no depends_on: ai starts even if job is down
+    deploy: { resources: { limits: { cpus: "1.0", memory: 1g } } }
+
   gateway:
     <<: *dotnet-svc
     image: ${IMAGE_REGISTRY:-ghcr.io/dut-pbl6-2026}/job-platform-gateway:${GATEWAY_TAG:-${IMAGE_TAG:-latest}}
@@ -252,6 +267,7 @@ services:
       GATEWAY_UPSTREAM_APP: http://app:5004
       GATEWAY_UPSTREAM_PROFILE: http://profile:5005
       GATEWAY_UPSTREAM_NOTIF: http://notif:5006
+      GATEWAY_UPSTREAM_AI: http://ai:6000
     ports:
       - "${GATEWAY_BIND:-0.0.0.0}:${GATEWAY_PORT:-5000}:5000"
     depends_on:
