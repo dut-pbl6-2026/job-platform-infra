@@ -5,6 +5,9 @@ name: job-platform
 # Kafka/Redis/ES are reached by service name (envs/.env.dev points at localhost for host-run
 # services). One JWT secret for every service: auth-svc, the gateway, job-svc and app-svc bind the
 # Jwt section (Jwt__* env vars); profile-svc and ai-svc read JWT_SECRET.
+# App images build from .build/src (scripts/fetch-sources.ps1|sh: clean clones of one ref, gitignored).
+# Set SERVICES_SRC=.. to build from the sibling working trees instead.
+
 x-dev-dotnet-env: &dev-dotnet-env
   ASPNETCORE_ENVIRONMENT: Development
   JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me-32chars-min}
@@ -151,7 +154,7 @@ services:
   # ── App Services (PBL6-16 E2E auth via gateway) ──
   auth:
     build:
-      context: ../job-platform-auth-svc
+      context: ${SERVICES_SRC:-./.build/src}/job-platform-auth-svc
       dockerfile: Dockerfile
     container_name: job-platform-auth
     restart: unless-stopped
@@ -180,7 +183,7 @@ services:
   # job-svc reads ConnectionStrings:JobDb before DATABASE_URL_JOB: set both.
   job:
     build:
-      context: ../job-platform-job-svc
+      context: ${SERVICES_SRC:-./.build/src}/job-platform-job-svc
       dockerfile: Dockerfile
     container_name: job-platform-job
     restart: unless-stopped
@@ -207,7 +210,7 @@ services:
   # No SEARCH_INDEX_TOKEN: POST /api/search/index stays open (local dev only, warned at startup).
   search:
     build:
-      context: ../job-platform-search-svc
+      context: ${SERVICES_SRC:-./.build/src}/job-platform-search-svc
       dockerfile: Dockerfile
     container_name: job-platform-search
     restart: unless-stopped
@@ -236,7 +239,7 @@ services:
 
   app:
     build:
-      context: ../job-platform-app-svc
+      context: ${SERVICES_SRC:-./.build/src}/job-platform-app-svc
       dockerfile: Dockerfile
     container_name: job-platform-app
     restart: unless-stopped
@@ -267,7 +270,7 @@ services:
   # No PROFILE_ENCRYPTION_KEY: Development uses profile-svc's insecure dev key (logged as a warning).
   profile:
     build:
-      context: ../job-platform-profile-svc
+      context: ${SERVICES_SRC:-./.build/src}/job-platform-profile-svc
       dockerfile: Dockerfile
     container_name: job-platform-profile
     restart: unless-stopped
@@ -291,7 +294,7 @@ services:
   # Mail goes to MailHog: http://localhost:8025
   notif:
     build:
-      context: ../job-platform-notif-svc
+      context: ${SERVICES_SRC:-./.build/src}/job-platform-notif-svc
       dockerfile: Dockerfile
     container_name: job-platform-notif
     restart: unless-stopped
@@ -320,7 +323,7 @@ services:
   # It checks the auth-svc JWT itself (JWT_SECRET). Uses the image's own HEALTHCHECK (curl /health).
   ai:
     build:
-      context: ../job-platform-ai-svc
+      context: ${SERVICES_SRC:-./.build/src}/job-platform-ai-svc
       dockerfile: Dockerfile
     container_name: job-platform-ai
     restart: unless-stopped
@@ -336,7 +339,7 @@ services:
 
   gateway:
     build:
-      context: ../job-platform-gateway
+      context: ${SERVICES_SRC:-./.build/src}/job-platform-gateway
       dockerfile: Dockerfile
     container_name: job-platform-gateway
     restart: unless-stopped
@@ -382,7 +385,7 @@ services:
 
   web:
     build:
-      context: ../job-platform-web
+      context: ${SERVICES_SRC:-./.build/src}/job-platform-web
       dockerfile: Dockerfile
       args:
         VITE_API_URL: http://localhost:5000
