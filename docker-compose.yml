@@ -20,7 +20,8 @@ x-dev-dotnet-env: &dev-dotnet-env
   REDIS_URL: redis:6379
   ELASTICSEARCH_URL: http://elasticsearch:9200
 
-# .NET runtime images may lack curl (profile-svc): probe /health over bash /dev/tcp.
+# .NET runtime images may lack curl (profile-svc): probe /health over /dev/tcp, a bash feature.
+# Run it with bash explicitly: CMD-SHELL uses /bin/sh, which is dash in these Debian images.
 x-dev-dotnet-health: &dev-dotnet-health
   interval: 10s
   timeout: 5s
@@ -204,7 +205,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *dev-dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5002 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5002 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     networks: [job-platform]
 
   # No SEARCH_INDEX_TOKEN: POST /api/search/index stays open (local dev only, warned at startup).
@@ -234,7 +235,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *dev-dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5003 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5003 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     networks: [job-platform]
 
   app:
@@ -264,7 +265,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *dev-dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5004 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5004 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     networks: [job-platform]
 
   # No PROFILE_ENCRYPTION_KEY: Development uses profile-svc's insecure dev key (logged as a warning).
@@ -288,7 +289,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *dev-dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5005 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5005 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     networks: [job-platform]
 
   # Mail goes to MailHog: http://localhost:8025
@@ -316,7 +317,7 @@ services:
         condition: service_healthy
     healthcheck:
       <<: *dev-dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5006 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5006 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     networks: [job-platform]
 
   # ai-svc (Python): resume scoring behind /api/ai/*. The image downloads its ONNX model at build time.

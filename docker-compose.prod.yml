@@ -25,7 +25,8 @@ x-dotnet-env: &dotnet-env
   REDIS_URL: redis:6379,password=${REDIS_PASSWORD:?REDIS_PASSWORD is required}
   ELASTICSEARCH_URL: http://elasticsearch:9200
 
-# .NET runtime images ship without curl/wget (profile-svc) → probe via bash /dev/tcp, same for all services.
+# .NET runtime images ship without curl/wget (profile-svc) → probe /health over /dev/tcp, same for all services.
+# /dev/tcp is a bash feature and CMD-SHELL runs /bin/sh (dash in these Debian images): call bash explicitly.
 x-dotnet-health: &dotnet-health
   interval: 15s
   timeout: 5s
@@ -145,7 +146,7 @@ services:
       postgres: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5001 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5001 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   job:
@@ -162,7 +163,7 @@ services:
       kafka: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5002 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5002 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   search:
@@ -182,7 +183,7 @@ services:
       kafka: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5003 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5003 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   app:
@@ -202,7 +203,7 @@ services:
       kafka: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5004 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5004 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   profile:
@@ -217,7 +218,7 @@ services:
       postgres: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5005 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5005 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   notif:
@@ -237,7 +238,7 @@ services:
       kafka: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5006 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5006 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   # ai-svc (Python, local ONNX model + OCR): resume scoring behind /api/ai/*. Checks the auth-svc JWT
@@ -279,7 +280,7 @@ services:
       notif: { condition: service_healthy }
     healthcheck:
       <<: *dotnet-health
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/5000 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5000 && printf 'GET /health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200'"]
     deploy: { resources: { limits: { cpus: "0.5", memory: 384m } } }
 
   web:
