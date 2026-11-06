@@ -20,7 +20,7 @@ flowchart LR
 
     subgraph Monitoring["📊 Monitoring Stack"]
         PROM["Prometheus :9090\n(TSDB, 15s scrape interval, 7d retention)"]
-        GRAF["Grafana :3001\n(Auto-provisioned Dashboards & Datasource)"]
+        GRAF["Grafana :4001\n(Auto-provisioned Dashboards & Datasource)"]
     end
 
     GW -- "GET /metrics" --> PROM
@@ -44,7 +44,7 @@ flowchart LR
    - For services run directly on the host (e.g. `dotnet run`), targets `host.docker.internal:<port>`.
    - TSDB retention set to 7 days for local development.
 3. **Grafana (`job-platform-grafana`):**
-   - Listens on host port `3001` (to prevent conflict with frontend React dev server on port 3000).
+   - Listens on host port `4001`, mapped to container port 3000 (to prevent conflict with frontend React dev server on port 3000).
    - Automatically loads Prometheus datasource via provisioning (`docker/grafana/provisioning/datasources/prometheus.yml`).
    - Automatically loads dashboards from `docker/grafana/dashboards/` via dashboard provisioning.
 
@@ -87,7 +87,7 @@ so the names below are the ones you will actually see on `/metrics`):
 
 | Tool | Host URL | Default Credentials | Description |
 |------|----------|---------------------|-------------|
-| **Grafana** | [http://localhost:3001](http://localhost:3001) | User: `admin`<br/>Pass: `admin` | Dashboards, visualizations, explorations |
+| **Grafana** | [http://localhost:4001](http://localhost:4001) | User: `admin`<br/>Pass: `admin` | Dashboards, visualizations, explorations |
 | **Prometheus** | [http://localhost:9090](http://localhost:9090) | None | PromQL console & expression browser |
 | **Prometheus Targets** | [http://localhost:9090/targets](http://localhost:9090/targets) | None | Health status of microservice scrapers |
 
