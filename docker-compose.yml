@@ -209,6 +209,10 @@ services:
       # New recruiter jobs start as Pending and need admin approval (off by default in job-svc).
       FEATURE_ADMIN_APPROVAL: "true"
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-dev-internal-service-token}
+      # PBL6-10 recommendations: backfill reads app-svc /api/internal/applications (same token).
+      APP_SERVICE_URL: http://app:5004
+      KAFKA_GROUP_JOB_RECOMMENDER: job-svc-recommender
+      RECOMMENDATION_BACKFILL_ENABLED: "true"
     ports:
       - "5002:5002"
     depends_on:
