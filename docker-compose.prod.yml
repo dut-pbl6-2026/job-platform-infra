@@ -166,6 +166,11 @@ services:
       SEARCH_SYNC_URL: http://search:5003
       SEARCH_INDEX_TOKEN: ${SEARCH_INDEX_TOKEN:?SEARCH_INDEX_TOKEN is required}
       INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN is required}
+      # PBL6-10 recommendations: dedicated consumer group (KAFKA_GROUP_ID is shared) and the
+      # one-time backfill from app-svc /api/internal/applications.
+      APP_SERVICE_URL: http://app:5004
+      KAFKA_GROUP_JOB_RECOMMENDER: ${KAFKA_GROUP_JOB_RECOMMENDER:-job-svc-recommender}
+      RECOMMENDATION_BACKFILL_ENABLED: ${RECOMMENDATION_BACKFILL_ENABLED:-true}
     depends_on:
       postgres: { condition: service_healthy }
       kafka: { condition: service_healthy }
